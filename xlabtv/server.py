@@ -316,6 +316,7 @@ def main(argv=None) -> int:
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--log", type=Path, default=None, help="file for app output")
     ap.add_argument("--check", action="store_true", help="validate the config and exit")
+    ap.add_argument("--port-file", type=Path, default=None, help="write the port in use here")
     args = ap.parse_args(argv)
 
     try:
@@ -339,8 +340,15 @@ def main(argv=None) -> int:
         httpd.shutdown()
 
     handler = make_handler(config, launcher, ui_dir, token, port_ref, on_exit=stop)
-    httpd = ThreadingHTTPServer(("127.0.0.1", args.port), handler)
+    try:
+        httpd = ThreadingHTTPServer(("127.0.0.1", args.port), handler)
+    except OSError as exc:
+        # Port taken (by a leftover or another program): use any free port instead.
+        print(f"xlab-tv: port {args.port} unavailable ({exc.strerror}), picking a free one", file=sys.stderr)
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     port_ref[0] = httpd.server_address[1]
+    if args.port_file:
+        args.port_file.write_text(str(port_ref[0]))
     print(f"xlab-tv: listening on http://127.0.0.1:{port_ref[0]}/", flush=True)
     try:
         httpd.serve_forever()
@@ -352,4 +360,9 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception:  # log it for session.log instead of a crash dialog
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)

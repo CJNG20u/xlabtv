@@ -1,7 +1,7 @@
 #!/bin/sh
-# Installs xLab TV on Ubuntu/Debian. Run from the repo folder as your normal user:
-#   ./install.sh                 install, keep the normal login screen
-#   ./install.sh --autologin     also boot straight into xLab TV (GDM only)
+# Installs xLab TV on Ubuntu. Run from the repo folder as your normal user:
+#   ./install.sh                 the launcher opens full screen when you log in
+#   ./install.sh --autologin     also log in automatically and keep the screen on
 set -eu
 
 PREFIX=/usr/lib/xlab-tv
@@ -16,7 +16,7 @@ fi
 
 echo "==> Installing packages"
 sudo apt-get update -qq
-sudo apt-get install -y python3 cage firefox
+sudo apt-get install -y python3 firefox
 
 echo "==> Copying xLab TV to $PREFIX"
 sudo mkdir -p "$PREFIX/xlabtv" "$PREFIX/session" "$PREFIX/ui"
@@ -35,7 +35,13 @@ if [ -f dist/index.html ]; then
     sudo rm -rf "$PREFIX/ui/dist"
     sudo cp -r dist "$PREFIX/ui/dist"
 fi
-sudo install -m 0644 session/xlab-tv.desktop /usr/share/wayland-sessions/xlab-tv.desktop
+
+# Earlier versions added a cage login session, which crashes with Firefox: remove it.
+sudo rm -f /usr/share/wayland-sessions/xlab-tv.desktop
+ACCT=/var/lib/AccountsService/users/$USER_NAME
+if sudo grep -q '^Session=xlab-tv' "$ACCT" 2>/dev/null; then
+    sudo sed -i '/^Session=xlab-tv/d' "$ACCT"
+fi
 
 CONFIG=${XDG_CONFIG_HOME:-$HOME/.config}/xlab-tv/apps.json
 if [ ! -f "$CONFIG" ]; then
@@ -45,20 +51,29 @@ if [ ! -f "$CONFIG" ]; then
 fi
 python3 "$PREFIX/xlabtv/server.py" --config "$CONFIG" --check
 
+echo "==> Starting the launcher at login"
+AUTOSTART=${XDG_CONFIG_HOME:-$HOME/.config}/autostart
+mkdir -p "$AUTOSTART"
+printf '%s\n' \
+    '[Desktop Entry]' \
+    'Type=Application' \
+    'Name=xLab TV' \
+    'Comment=TV home screen' \
+    "Exec=$PREFIX/session/xlab-tv-kiosk" \
+    'X-GNOME-Autostart-enabled=true' >"$AUTOSTART/xlab-tv.desktop"
+
 if [ "$AUTOLOGIN" -eq 1 ]; then
     if [ ! -f /etc/gdm3/custom.conf ]; then
         echo "Auto-login setup supports GDM only; set it up in your login manager." >&2
         exit 1
     fi
-    echo "==> Booting $USER_NAME straight into xLab TV"
+    echo "==> Logging $USER_NAME in automatically, screen always on"
     sudo sed -i -e '/^AutomaticLoginEnable/d' -e '/^AutomaticLogin=/d' \
         -e "s/^\[daemon\]/[daemon]\nAutomaticLoginEnable=true\nAutomaticLogin=$USER_NAME/" /etc/gdm3/custom.conf
-    ACCT=/var/lib/AccountsService/users/$USER_NAME
-    if sudo test -f "$ACCT"; then
-        sudo sed -i -e '/^Session=/d' -e '/^XSession=/d' -e "s/^\[User\]/[User]\nSession=xlab-tv/" "$ACCT"
-    else
-        printf '[User]\nSession=xlab-tv\n' | sudo tee "$ACCT" >/dev/null
-    fi
+    gsettings set org.gnome.desktop.session idle-delay 0
+    gsettings set org.gnome.desktop.screensaver lock-enabled false
+    gsettings set org.gnome.desktop.notifications show-banners false
+    gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type nothing
 fi
 
-echo "==> Done. Log out and pick \"xLab TV\" at the login screen (gear icon)."
+echo "==> Done. Log out and back in, or start it now with: $PREFIX/session/xlab-tv-kiosk &"

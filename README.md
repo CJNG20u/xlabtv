@@ -4,7 +4,7 @@ A TV home screen for Linux mini PCs: boot straight into a full-screen launcher,
 pick an app with a remote or controller, and come back to the launcher when it closes.
 
 ```
-login screen ──► "xLab TV" session (cage kiosk)
+login (Ubuntu desktop) ──► autostart: xlab-tv-kiosk
                    ├── xlab-tv service   127.0.0.1:8765  (lists, launches, power)
                    └── Firefox --kiosk ─► the launcher UI (dist/)
                          └── launched app opens on top, closes back to the launcher
@@ -15,8 +15,8 @@ login screen ──► "xLab TV" session (cage kiosk)
 ```sh
 sudo apt install nodejs npm      # to build the UI
 git clone https://github.com/CJNG20u/xlabtv.git && cd xlabtv
-./install.sh               # adds the "xLab TV" session to the login screen
-./install.sh --autologin   # same, and boots straight into it
+./install.sh               # the launcher opens full screen when you log in
+./install.sh --autologin   # also logs in automatically and keeps the screen on
 ```
 
 Then edit `~/.config/xlab-tv/apps.json` to add your apps (see `apps.example.json`).
@@ -44,7 +44,7 @@ The UI talks to the service through this API. Every `/api/*` call needs the head
 | `GET /api/status` | | `{running: "nuvio" \| null}` |
 | `POST /api/power` | `{"action": "suspend" \| "reboot" \| "poweroff" \| "exit"}` | `{ok: true}` |
 
-`exit` closes xLab TV and returns to the login screen.
+`exit` closes the launcher and leaves the Ubuntu desktop.
 
 ## Develop
 

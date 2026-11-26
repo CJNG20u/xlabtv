@@ -1,6 +1,0 @@
-[Desktop Entry]
-Name=xLab TV
-Comment=TV home screen for this computer
-Exec=cage -s -- /usr/lib/xlab-tv/session/xlab-tv-kiosk
-Type=Application
-DesktopNames=xLab-TV
