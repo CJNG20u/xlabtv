@@ -1,28 +1,71 @@
 # xLab TV
 
-A TV home screen for Linux mini PCs: boot straight into a full-screen launcher,
-pick an app with a remote or controller, and come back to the launcher when it closes.
+**A Google TV-style home screen for Linux mini PCs.** Turn an Ubuntu PC into a TV box:
+it boots straight into a full-screen launcher you drive with a remote, a controller or
+your phone.
 
-```
-login (Ubuntu desktop) ──► autostart: xlab-tv-kiosk
-                   ├── xlab-tv service   127.0.0.1:8765  (lists, launches, power)
-                   └── xLab TV window (GTK + WebKit) ─► the launcher UI (dist/)
-                         └── launched app opens on top, closes back to the launcher
-```
+- **Your content up front:** focus Nuvio and the hero shows your Continue watching; focus
+  YouTube and it shows new videos from your channels.
+- **A Store of 40 TV-friendly apps** (Nuvio, YouTube, Kodi, Jellyfin, Plex, Steam, Spotify,
+  Netflix and more), installed with one click, no password.
+- **A phone remote:** scan a QR code; D-pad, touchpad, typing, volume, app shortcuts, power.
+- **Like a real TV box:** several apps open at once, Home goes back to the launcher and
+  pauses the video, Quick Settings for Wi-Fi, Bluetooth and sound, one-click updates.
 
-## Install (Ubuntu 26.04)
+**Needs:** Ubuntu 26.04 LTS Desktop (GNOME) on a 64-bit Intel or AMD PC, and an internet
+connection. Ethernet recommended.
 
-One line, from the ready-made package (no git or Node.js needed):
+## Install
+
+Open a terminal (Ctrl + Alt + T) and run:
 
 ```sh
 wget -qO- https://github.com/CJNG20u/xlabtv/releases/download/latest/get.sh | sh
+```
+
+It asks for your password once, sets everything up, and xLab TV opens full screen the next
+time you log in. To make the PC **boot straight into xLab TV** (log in automatically and
+keep the screen on), use this instead:
+
+```sh
 wget -qO- https://github.com/CJNG20u/xlabtv/releases/download/latest/get.sh | sh -s -- --autologin
 ```
 
-The second also logs in automatically and keeps the screen on. The **Updates** tile
-(and the gear's badge) then follows new packages. GitHub builds the package on every
-push to `main` that passes the checks, as the rolling **latest** release
-(`xlab-tv.tar.gz`, `get.sh`, `VERSION`).
+Then restart.
+
+**First steps**
+
+1. **Apps:** open the **Store** (last card of the first row) and install what you use.
+2. **Phone remote:** gear (top right) → **Phone remote**, scan the QR code with your phone,
+   then "Add to Home screen" in Chrome.
+3. **Smooth video on Intel graphics:** `sudo apt install intel-media-va-driver-non-free`
+4. **YouTube in the hero:** add your channels to `~/.config/xlab-tv/apps.json`:
+   `{ "youtube": { "channels": ["@mkbhd", "@veritasium"] } }`
+
+**Getting around:** the arrow keys / D-pad move, OK opens, Back goes back, **Home** returns
+to xLab TV (the app you were in waits, paused, under **Open now**). Long-press OK on a card
+for Close, Move, Hide and Uninstall.
+
+## Update
+
+Use the **Updates** tile in the **System** row (the gear shows a badge when something is
+new), or run the install line again. Then log out and back in.
+
+## Uninstall
+
+Don't like it? One line removes xLab TV and undoes its changes: the launcher, the GNOME
+extension, the remote button mapping, the phone remote's keyboard permission, automatic
+login and the screen-lock/sleep settings go back to normal.
+
+```sh
+wget -qO- https://github.com/CJNG20u/xlabtv/releases/download/latest/uninstall.sh | sh
+```
+
+Add `-s -- --keep-config` to keep your settings (app list, YouTube channels, paired phones).
+Then log out and back in. Apps you installed from the Store stay; list them with
+`flatpak list --user --app` and remove one with `flatpak uninstall --user <app id>`.
+
+## For developers
 
 For development, from a git checkout (builds the UI with Node.js; Updates then does `git pull`):
 
@@ -30,6 +73,17 @@ For development, from a git checkout (builds the UI with Node.js; Updates then d
 sudo apt install git nodejs npm
 git clone https://github.com/CJNG20u/xlabtv.git && cd xlabtv
 sh install.sh               # add --autologin to also log in automatically
+```
+
+GitHub builds the ready-made package on every push to `main` that passes the checks and
+publishes it as the rolling **latest** release (`xlab-tv.tar.gz`, `get.sh`, `uninstall.sh`,
+`VERSION`).
+
+```
+login (Ubuntu desktop) ──► autostart: xlab-tv-kiosk
+                   ├── xlab-tv service   127.0.0.1:8765  (lists, launches, power)
+                   └── xLab TV window (GTK + WebKit) ─► the launcher UI (dist/)
+                         └── launched app opens on top, closes back to the launcher
 ```
 
 ## Apps

@@ -6,7 +6,7 @@ set -eu
 version="${1:-$(date -u +%Y.%m.%d)-$(git rev-parse --short HEAD)}"
 out=$(mktemp -d)/xlab-tv
 mkdir -p "$out"
-cp -r install.sh get.sh apps.example.json README.md xlabtv session gnome-extension dist "$out/"
+cp -r install.sh get.sh uninstall.sh apps.example.json README.md xlabtv session gnome-extension dist "$out/"
 rm -rf "$out/xlabtv/__pycache__"
 echo "$version" > "$out/VERSION"
 tar -czf xlab-tv.tar.gz -C "$(dirname "$out")" xlab-tv
