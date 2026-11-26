@@ -1,4 +1,10 @@
-import { mockData, type MockData } from './mock';
+import {
+  mockData,
+  mockStoreData,
+  type MockData,
+  type StoreJobAction,
+  type StorePayload,
+} from './mock';
 
 export type PowerAction = 'suspend' | 'reboot' | 'poweroff' | 'exit';
 
@@ -12,6 +18,13 @@ export interface StatusResponse {
 
 export interface AppsFetchResult {
   data: MockData;
+  ok: boolean;
+  usedFallback: boolean;
+  error?: string;
+}
+
+export interface StoreFetchResult {
+  data: StorePayload;
   ok: boolean;
   usedFallback: boolean;
   error?: string;
@@ -41,6 +54,14 @@ function isValidAppsPayload(data: unknown): data is MockData {
   }
   const candidate = data as Partial<MockData>;
   return Array.isArray(candidate.hero) && Array.isArray(candidate.rows);
+}
+
+function isValidStorePayload(data: unknown): data is StorePayload {
+  if (!data || typeof data !== 'object') {
+    return false;
+  }
+  const candidate = data as Partial<StorePayload>;
+  return Array.isArray(candidate.items);
 }
 
 /**
@@ -112,6 +133,107 @@ export async function fetchApps(signal?: AbortSignal): Promise<MockData> {
     return result.data;
   } catch {
     return mockData;
+  }
+}
+
+/**
+ * Fetches available Store catalog items and active install/remove jobs from GET /api/store.
+ */
+export async function fetchStoreWithStatus(
+  signal?: AbortSignal
+): Promise<StoreFetchResult> {
+  try {
+    const response = await fetch('/api/store', {
+      method: 'GET',
+      headers: buildHeaders(),
+      signal,
+    });
+
+    if (!response.ok) {
+      return {
+        data: mockStoreData,
+        ok: false,
+        usedFallback: true,
+        error: `Could not load Store catalog (HTTP ${response.status}).`,
+      };
+    }
+
+    const data: unknown = await response.json();
+    if (!isValidStorePayload(data)) {
+      return {
+        data: mockStoreData,
+        ok: false,
+        usedFallback: true,
+        error: 'Received an unexpected Store catalog from the backend.',
+      };
+    }
+
+    return {
+      data,
+      ok: true,
+      usedFallback: false,
+    };
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw err;
+    }
+    return {
+      data: mockStoreData,
+      ok: false,
+      usedFallback: true,
+      error: 'Unable to reach the xLab TV Store service.',
+    };
+  }
+}
+
+/**
+ * Requests an app install or removal from POST /api/store (202 = accepted).
+ */
+export async function submitStoreAction(
+  id: string,
+  action: StoreJobAction
+): Promise<ApiActionResponse> {
+  try {
+    const response = await fetch('/api/store', {
+      method: 'POST',
+      headers: buildHeaders(true),
+      body: JSON.stringify({ id, action }),
+    });
+
+    let payload: Partial<{ ok: boolean; error: string }> | null = null;
+    try {
+      payload = (await response.json()) as Partial<{ ok: boolean; error: string }>;
+    } catch {
+      payload = null;
+    }
+
+    if (response.status === 202 || (payload && payload.ok === true)) {
+      return { ok: true };
+    }
+
+    if (payload && payload.ok === false) {
+      return {
+        ok: false,
+        error:
+          typeof payload.error === 'string' && payload.error.trim().length > 0
+            ? payload.error
+            : `Failed to ${action} "${id}".`,
+      };
+    }
+
+    if (response.ok) {
+      return { ok: true };
+    }
+
+    return {
+      ok: false,
+      error: `Store request failed (HTTP ${response.status}).`,
+    };
+  } catch {
+    return {
+      ok: false,
+      error: 'Unable to reach xLab TV Store backend.',
+    };
   }
 }
 

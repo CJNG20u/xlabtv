@@ -11,6 +11,7 @@ import navidromeIcon from './assets/icons/navidrome.svg';
 import tvIcon from './assets/icons/tv.svg';
 import radioIcon from './assets/icons/radio.svg';
 import nasIcon from './assets/icons/nas.svg';
+import storeIcon from './assets/icons/store.svg';
 
 export interface HeroItem {
   id: string;
@@ -262,6 +263,249 @@ export const mockData: MockData = {
           color: '#1E293B',
         },
       ],
+    },
+  ],
+};
+
+export type StoreJobAction = 'install' | 'remove';
+export type StoreJobState = 'queued' | 'running' | 'done' | 'failed';
+
+export interface StoreJob {
+  action: StoreJobAction;
+  state: StoreJobState;
+  message: string;
+}
+
+export interface StoreItem {
+  id: string;
+  name: string;
+  subtitle: string;
+  description: string;
+  category: string;
+  color: string;
+  icon: string;
+  installed: boolean;
+  job: StoreJob | null;
+}
+
+export interface StorePayload {
+  items: StoreItem[];
+}
+
+export const STORE_CARD_ID = 'store';
+
+export const storeCardItem: RowItem = {
+  id: STORE_CARD_ID,
+  name: 'Store',
+  subtitle: 'Browse & Install Apps',
+  icon: storeIcon,
+  color: '#0284C7',
+};
+
+export const mockStoreData: StorePayload = {
+  items: [
+    // Watch
+    {
+      id: 'jellyfin',
+      name: 'Jellyfin',
+      subtitle: 'Local Media Server',
+      description:
+        'Stream movies, TV series, and live broadcasts directly from your home NAS with hardware-accelerated VA-API decoding on Intel graphics.',
+      category: 'Watch',
+      color: '#2563EB',
+      icon: jellyfinIcon,
+      installed: true,
+      job: null,
+    },
+    {
+      id: 'kodi',
+      name: 'Kodi',
+      subtitle: 'Home Theater',
+      description:
+        'Full-featured 10-foot media center supporting local libraries, 4K HDR playback, passthrough surround sound, and community add-ons.',
+      category: 'Watch',
+      color: '#0284C7',
+      icon: kodiIcon,
+      installed: true,
+      job: null,
+    },
+    {
+      id: 'freetube',
+      name: 'FreeTube',
+      subtitle: 'Private Video Client',
+      description:
+        'Watch online video subscriptions from the couch with zero tracking, local subscription storage, and clean keyboard/remote playback.',
+      category: 'Watch',
+      color: '#B91C1C',
+      icon: '',
+      installed: false,
+      job: {
+        action: 'install',
+        state: 'running',
+        message: 'Installing FreeTube Flatpak runtime…',
+      },
+    },
+    {
+      id: 'mpv-cinema',
+      name: 'MPV Cinema',
+      subtitle: 'Reference Player',
+      description:
+        'Minimalist high-precision video player tuned for 24p frame pacing, crisp subtitle rendering, and low-overhead GPU scaling.',
+      category: 'Watch',
+      color: '#4C1D95',
+      icon: '',
+      installed: false,
+      job: null,
+    },
+    {
+      id: 'live-dvb',
+      name: 'Live DVB-T2',
+      subtitle: 'TVHeadend Tuner',
+      description:
+        'Watch and record over-the-air broadcasts with full electronic program guide support via your local TVHeadend tuner.',
+      category: 'Watch',
+      color: '#0369A1',
+      icon: tvIcon,
+      installed: true,
+      job: null,
+    },
+
+    // Music
+    {
+      id: 'navidrome',
+      name: 'Navidrome',
+      subtitle: 'Lossless Music',
+      description:
+        'Browse and play your personal FLAC and hi-res audio collection with gapless playback and bit-perfect PipeWire output.',
+      category: 'Music',
+      color: '#B45309',
+      icon: navidromeIcon,
+      installed: true,
+      job: null,
+    },
+    {
+      id: 'radio-streams',
+      name: 'FIP & Radio',
+      subtitle: 'Curated Web Radio',
+      description:
+        'Listen to ad-free international public radio and lossless internet streams optimized for living-room speakers.',
+      category: 'Music',
+      color: '#C2410C',
+      icon: radioIcon,
+      installed: true,
+      job: null,
+    },
+    {
+      id: 'spotube',
+      name: 'Spotube',
+      subtitle: 'Open Audio Streamer',
+      description:
+        'Lightweight open-source music client with synced lyrics, playlists, and clean remote-friendly queue controls.',
+      category: 'Music',
+      color: '#047857',
+      icon: '',
+      installed: false,
+      job: null,
+    },
+    {
+      id: 'podcast-deck',
+      name: 'Podcast Deck',
+      subtitle: 'Audio & Video Feeds',
+      description:
+        'Subscribe to RSS podcast feeds with automatic overnight downloads and living-room chapter skipping.',
+      category: 'Music',
+      color: '#6D28D9',
+      icon: '',
+      installed: false,
+      job: null,
+    },
+
+    // Play
+    {
+      id: 'steam',
+      name: 'Steam Big Picture',
+      subtitle: 'Linux Gaming',
+      description:
+        'Launch your PC game library in controller-first mode with Steam Play Proton, shader pre-caching, and wireless gamepad profiles.',
+      category: 'Play',
+      color: '#1E40AF',
+      icon: steamIcon,
+      installed: true,
+      job: null,
+    },
+    {
+      id: 'retroarch',
+      name: 'RetroArch',
+      subtitle: 'Classic Consoles',
+      description:
+        'Unified frontend for classic console cores with low-latency run-ahead, CRT shaders, and automatic controller mapping.',
+      category: 'Play',
+      color: '#4F46E5',
+      icon: retroarchIcon,
+      installed: true,
+      job: null,
+    },
+    {
+      id: 'moonlight',
+      name: 'Moonlight',
+      subtitle: 'LAN Game Stream',
+      description:
+        'Stream low-latency 1080p/4K 60 fps games from a desktop PC on your local network using Sunshine with hardware decoding.',
+      category: 'Play',
+      color: '#0F766E',
+      icon: '',
+      installed: false,
+      job: null,
+    },
+    {
+      id: 'heroic-games',
+      name: 'Heroic Launcher',
+      subtitle: 'GOG & Epic Games',
+      description:
+        'Native Linux launcher for GOG, Epic, and Amazon game libraries with Wine/Proton management and gamepad navigation.',
+      category: 'Play',
+      color: '#1D4ED8',
+      icon: '',
+      installed: false,
+      job: null,
+    },
+
+    // Web
+    {
+      id: 'couch-browser',
+      name: 'Couch Web',
+      subtitle: '10-Foot Browser',
+      description:
+        'Fullscreen Wayland web browser tuned for TV viewing with large zoom defaults, ad blocking, and controller scrolling.',
+      category: 'Web',
+      color: '#0E7490',
+      icon: '',
+      installed: false,
+      job: null,
+    },
+    {
+      id: 'home-dashboard',
+      name: 'Home Assistant',
+      subtitle: 'Smart Home View',
+      description:
+        'Check living-room climate, lighting scenes, and local RTSP cameras right on the TV without leaving the couch.',
+      category: 'Web',
+      color: '#0369A1',
+      icon: nasIcon,
+      installed: false,
+      job: null,
+    },
+    {
+      id: 'weather-radar',
+      name: 'Sky Radar',
+      subtitle: 'Local Forecast',
+      description:
+        'High-contrast 10-foot local weather overview with hourly temperature curves and regional radar playback.',
+      category: 'Web',
+      color: '#334155',
+      icon: '',
+      installed: false,
+      job: null,
     },
   ],
 };

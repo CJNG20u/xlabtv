@@ -3,9 +3,11 @@ import { Loader2 } from 'lucide-react';
 import {
   fetchAppsWithStatus,
   fetchStatus,
+  fetchStoreWithStatus,
   isAppsPayloadEmpty,
   launchApp,
   sendPowerAction,
+  submitStoreAction,
   type PowerAction,
 } from './api';
 import { AmbientScreensaver } from './components/AmbientScreensaver';
@@ -17,13 +19,26 @@ import {
   SettingsDrawer,
   type LauncherSettings,
 } from './components/SettingsDrawer';
+import { StoreDetailPanel } from './components/StoreDetailPanel';
+import { groupStoreItemsByCategory, StoreView } from './components/StoreView';
 import { Toast, type ToastMessage } from './components/Toast';
-import { TopBar } from './components/TopBar';
+import { TopBar, type TopBarButton } from './components/TopBar';
 import { useGamepadInput, type SpatialAction } from './hooks/useGamepadInput';
-import { mockData, type HeroItem, type MockData, type RowItem } from './mock';
+import {
+  mockData,
+  mockStoreData,
+  STORE_CARD_ID,
+  storeCardItem,
+  type HeroItem,
+  type MockData,
+  type RowItem,
+  type StoreItem,
+  type StoreJobAction,
+  type StoreJobState,
+} from './mock';
 
 type FocusState =
-  | { zone: 'topbar' }
+  | { zone: 'topbar'; button: TopBarButton }
   | { zone: 'hero' }
   | { zone: 'retry' }
   | { zone: 'row'; rowIndex: number; colIndex: number };
@@ -31,6 +46,12 @@ type FocusState =
 interface PendingLaunch {
   id: string;
   name: string;
+}
+
+interface TrackedStoreJob {
+  state: StoreJobState;
+  action: StoreJobAction;
+  message: string;
 }
 
 const DEFAULT_SETTINGS: LauncherSettings = {
@@ -42,6 +63,7 @@ const DEFAULT_SETTINGS: LauncherSettings = {
 
 const SETTINGS_ITEM_COUNT = 8; // 0..3 Power & Session actions, 4..7 Display toggles
 const STATUS_POLL_INTERVAL_MS = 2000;
+const STORE_POLL_INTERVAL_MS = 2000;
 const POWER_ARM_TIMEOUT_MS = 5000;
 const TOAST_DURATION_MS = 4500;
 const LAUNCH_TIMEOUT_MS = 20000;
@@ -58,6 +80,27 @@ export default function App() {
   // Tracks empty library or persistent backend failure state
   const [apiErrorMessage, setApiErrorMessage] = useState<string | null>(null);
   const [retryingApps, setRetryingApps] = useState<boolean>(false);
+
+  // Store state (kept at App level so background install/remove polling continues if user leaves Store)
+  const [storeOpen, setStoreOpen] = useState<boolean>(false);
+  const [storeItems, setStoreItems] = useState<StoreItem[]>(
+    import.meta.env.DEV ? mockStoreData.items : []
+  );
+  const [storeError, setStoreError] = useState<string | null>(null);
+  const [retryingStore, setRetryingStore] = useState<boolean>(false);
+  const [storeFocus, setStoreFocus] = useState<{
+    rowIndex: number;
+    colIndex: number;
+  }>({ rowIndex: 0, colIndex: 0 });
+  const [storeRowMemory, setStoreRowMemory] = useState<Record<number, number>>(
+    {}
+  );
+  const [selectedStoreItemId, setSelectedStoreItemId] = useState<string | null>(
+    null
+  );
+  const [submittingStoreItemId, setSubmittingStoreItemId] = useState<
+    string | null
+  >(null);
 
   const [settings, setSettings] = useState<LauncherSettings>(DEFAULT_SETTINGS);
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
@@ -86,19 +129,61 @@ export default function App() {
   const idleTimerRef = useRef<number | null>(null);
 
   const lastLaunchedFocusRef = useRef<FocusState | null>(null);
+  const storeReturnFocusRef = useRef<FocusState>({ zone: 'hero' });
+  const lastTopBarButtonRef = useRef<TopBarButton>('store');
   const prevConfirmedRunningRef = useRef<string | null>(null);
+  const prevStoreJobsRef = useRef<Record<string, TrackedStoreJob>>({});
+  const storeBackendSeenRef = useRef<boolean>(false);
   const backendConnectedOnceRef = useRef<boolean>(false);
   const consecutiveStatusFailuresRef = useRef<number>(0);
   const consecutiveAppsFailuresRef = useRef<number>(0);
 
   const heroItems = launcherData.hero;
-  const rows = useMemo(
-    () => launcherData.rows.filter((row) => row.items.length > 0),
-    [launcherData.rows]
-  );
+
+  // Hide empty rows and append the "Store" card as the last item of the first row
+  const rows = useMemo(() => {
+    const nonEmpty = launcherData.rows.filter((row) => row.items.length > 0);
+    if (nonEmpty.length === 0) {
+      return nonEmpty;
+    }
+
+    const [firstRow, ...restRows] = nonEmpty;
+    const hasStoreCard = firstRow.items.some(
+      (item) => item.id === STORE_CARD_ID
+    );
+    const firstRowWithStore = hasStoreCard
+      ? firstRow
+      : { ...firstRow, items: [...firstRow.items, storeCardItem] };
+
+    return [firstRowWithStore, ...restRows];
+  }, [launcherData.rows]);
 
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
+
+  const storeRows = useMemo(
+    () => groupStoreItemsByCategory(storeItems),
+    [storeItems]
+  );
+
+  const activeStoreJobCount = useMemo(
+    () =>
+      storeItems.filter(
+        (item) =>
+          item.job?.state === 'queued' || item.job?.state === 'running'
+      ).length,
+    [storeItems]
+  );
+
+  const hasActiveStoreJob = activeStoreJobCount > 0;
+
+  const selectedStoreItem = useMemo(
+    () =>
+      selectedStoreItemId
+        ? storeItems.find((item) => item.id === selectedStoreItemId) ?? null
+        : null,
+    [selectedStoreItemId, storeItems]
+  );
 
   const activeOverlayId = confirmedRunningId ?? pendingLaunch?.id ?? null;
   const isLibraryEmpty = isAppsPayloadEmpty(launcherData);
@@ -233,9 +318,14 @@ export default function App() {
                 return { zone: 'hero' };
               }
               const safeRow = Math.min(curr.rowIndex, nonEmptyRows.length - 1);
+              const extraStoreSlot =
+                safeRow === 0 &&
+                !nonEmptyRows[0].items.some((i) => i.id === STORE_CARD_ID)
+                  ? 1
+                  : 0;
               const safeCol = Math.min(
                 curr.colIndex,
-                Math.max(0, nonEmptyRows[safeRow].items.length - 1)
+                Math.max(0, nonEmptyRows[safeRow].items.length + extraStoreSlot - 1)
               );
               return { zone: 'row', rowIndex: safeRow, colIndex: safeCol };
             });
@@ -247,7 +337,11 @@ export default function App() {
         consecutiveAppsFailuresRef.current += 1;
 
         // In dev mode without a backend, fall back seamlessly to mockData on startup
-        if (import.meta.env.DEV && !isManualRetry && !backendConnectedOnceRef.current) {
+        if (
+          import.meta.env.DEV &&
+          !isManualRetry &&
+          !backendConnectedOnceRef.current
+        ) {
           setLauncherData(mockData);
           setApiErrorMessage(null);
           return;
@@ -287,6 +381,178 @@ export default function App() {
     void loadApps({ signal: controller.signal });
     return () => controller.abort();
   }, [loadApps]);
+
+  // Apply fresh Store catalog and detect job transitions (done/failed -> toast + refetch /api/apps)
+  const applyStoreItems = useCallback(
+    (nextItems: StoreItem[], isLiveBackend: boolean) => {
+      const prevJobs = prevStoreJobsRef.current;
+      const nextJobs: Record<string, TrackedStoreJob> = {};
+      let shouldRefetchApps = false;
+
+      for (const item of nextItems) {
+        const prev = prevJobs[item.id];
+        const curr = item.job;
+
+        if (isLiveBackend && prev && (prev.state === 'queued' || prev.state === 'running')) {
+          if (curr && curr.state === 'done') {
+            showToast(
+              curr.message ||
+                `${item.name} ${curr.action === 'remove' ? 'removed' : 'installed'}.`,
+              'info'
+            );
+            shouldRefetchApps = true;
+          } else if (curr && curr.state === 'failed') {
+            showToast(
+              curr.message || `Couldn't ${curr.action} ${item.name}.`,
+              'error'
+            );
+            shouldRefetchApps = true;
+          } else if (!curr) {
+            showToast(
+              `${item.name} ${prev.action === 'remove' ? 'removed' : 'installed'}.`,
+              'info'
+            );
+            shouldRefetchApps = true;
+          }
+        }
+
+        if (curr) {
+          nextJobs[item.id] = {
+            state: curr.state,
+            action: curr.action,
+            message: curr.message,
+          };
+        }
+      }
+
+      prevStoreJobsRef.current = nextJobs;
+      setStoreItems(nextItems);
+
+      // Clamp Store focus safely if rows/items changed
+      const grouped = groupStoreItemsByCategory(nextItems);
+      setStoreFocus((curr) => {
+        if (grouped.length === 0) {
+          return { rowIndex: 0, colIndex: 0 };
+        }
+        const safeRow = Math.min(curr.rowIndex, grouped.length - 1);
+        const safeCol = Math.min(
+          curr.colIndex,
+          Math.max(0, grouped[safeRow].items.length - 1)
+        );
+        return { rowIndex: safeRow, colIndex: safeCol };
+      });
+
+      if (shouldRefetchApps) {
+        void loadApps();
+      }
+    },
+    [showToast, loadApps]
+  );
+
+  // Fetch Store catalog from GET /api/store
+  const loadStore = useCallback(
+    async (options?: {
+      isManualRetry?: boolean;
+      silent?: boolean;
+      signal?: AbortSignal;
+    }) => {
+      const isManualRetry = Boolean(options?.isManualRetry);
+      if (isManualRetry) {
+        setRetryingStore(true);
+      }
+
+      try {
+        const result = await fetchStoreWithStatus(options?.signal);
+        if (options?.signal?.aborted) {
+          return;
+        }
+
+        if (result.ok) {
+          storeBackendSeenRef.current = true;
+          setStoreError(null);
+          applyStoreItems(result.data.items, true);
+          return;
+        }
+
+        // In dev mode without a backend, fall back cleanly to mockStoreData
+        if (
+          import.meta.env.DEV &&
+          !isManualRetry &&
+          !storeBackendSeenRef.current
+        ) {
+          setStoreError(null);
+          if (!options?.silent) {
+            applyStoreItems(mockStoreData.items, false);
+          }
+          return;
+        }
+
+        if (!options?.silent) {
+          setStoreError(
+            result.error ?? 'Unable to reach the xLab TV Store service.'
+          );
+        }
+      } catch {
+        // Aborted on unmount
+      } finally {
+        if (isManualRetry) {
+          setRetryingStore(false);
+        }
+      }
+    },
+    [applyStoreItems]
+  );
+
+  // Initial Store sync on mount so any already-running backend jobs are tracked immediately
+  useEffect(() => {
+    const controller = new AbortController();
+    void loadStore({ signal: controller.signal });
+    return () => controller.abort();
+  }, [loadStore]);
+
+  // Poll GET /api/store every 2 seconds while any job is "queued" or "running" (even outside Store)
+  useEffect(() => {
+    if (!hasActiveStoreJob) {
+      return;
+    }
+
+    let active = true;
+    let inFlight = false;
+    let activeController: AbortController | null = null;
+
+    const pollStore = async () => {
+      if (!active || inFlight) {
+        return;
+      }
+      inFlight = true;
+      activeController = new AbortController();
+
+      try {
+        const result = await fetchStoreWithStatus(activeController.signal);
+        if (!active || !result.ok) {
+          return;
+        }
+        storeBackendSeenRef.current = true;
+        setStoreError(null);
+        applyStoreItems(result.data.items, true);
+      } catch {
+        // Aborted or transient network failure during poll
+      } finally {
+        inFlight = false;
+        activeController = null;
+      }
+    };
+
+    const intervalId = window.setInterval(() => {
+      void pollStore();
+    }, STORE_POLL_INTERVAL_MS);
+
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
+      activeController?.abort();
+    };
+  }, [hasActiveStoreJob, applyStoreItems]);
 
   // 20-second timeout for "Opening <name>…" when no app ever confirms running
   useEffect(() => {
@@ -359,16 +625,15 @@ export default function App() {
 
         if (status === null) {
           consecutiveStatusFailuresRef.current += 1;
-          // If a live backend was previously connected and now keeps failing, surface Retry screen
           if (
             backendConnectedOnceRef.current &&
             consecutiveStatusFailuresRef.current >=
               PERSISTENT_API_FAILURE_THRESHOLD
           ) {
-            setApiErrorMessage(
-              'Lost connection to the local xLab TV service.'
+            setApiErrorMessage('Lost connection to the local xLab TV service.');
+            setFocus((curr) =>
+              curr.zone === 'topbar' ? curr : { zone: 'retry' }
             );
-            setFocus((curr) => (curr.zone === 'topbar' ? curr : { zone: 'retry' }));
           }
           return;
         }
@@ -490,12 +755,87 @@ export default function App() {
     setRowMemory((prev) => ({ ...prev, [rowIndex]: colIndex }));
   }, []);
 
+  const handleFocusTopBar = useCallback((button: TopBarButton) => {
+    lastTopBarButtonRef.current = button;
+    setFocus({ zone: 'topbar', button });
+  }, []);
+
+  const handleFocusStoreCard = useCallback(
+    (rowIndex: number, colIndex: number) => {
+      setStoreFocus({ rowIndex, colIndex });
+      setStoreRowMemory((prev) => ({ ...prev, [rowIndex]: colIndex }));
+    },
+    []
+  );
+
+  const openStore = useCallback(
+    (returnFocus: FocusState) => {
+      storeReturnFocusRef.current = returnFocus;
+      setSelectedStoreItemId(null);
+      setStoreOpen(true);
+      void loadStore();
+    },
+    [loadStore]
+  );
+
+  const closeStore = useCallback(() => {
+    setSelectedStoreItemId(null);
+    setStoreOpen(false);
+    const restore = storeReturnFocusRef.current;
+    setFocus(restore);
+    if (restore.zone === 'row') {
+      setRowMemory((prev) => ({
+        ...prev,
+        [restore.rowIndex]: restore.colIndex,
+      }));
+    } else if (restore.zone === 'topbar') {
+      lastTopBarButtonRef.current = restore.button;
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, []);
+
+  const handleStoreAction = useCallback(
+    async (item: StoreItem, action: StoreJobAction) => {
+      if (submittingStoreItemId !== null) {
+        return;
+      }
+
+      setSubmittingStoreItemId(item.id);
+      const result = await submitStoreAction(item.id, action);
+      setSubmittingStoreItemId(null);
+
+      if (!result.ok) {
+        showToast(result.error, 'error');
+        return;
+      }
+
+      // Optimistically mark job as queued so UI shows "Waiting…" and starts 2s polling immediately
+      const queuedJob = { action, state: 'queued' as const, message: '' };
+      prevStoreJobsRef.current = {
+        ...prevStoreJobsRef.current,
+        [item.id]: queuedJob,
+      };
+      setStoreItems((prev) =>
+        prev.map((entry) =>
+          entry.id === item.id ? { ...entry, job: queuedJob } : entry
+        )
+      );
+
+      void loadStore({ silent: true });
+    },
+    [submittingStoreItemId, showToast, loadStore]
+  );
+
   const handleResetFocus = useCallback(() => {
     if (showEmptyOrErrorScreen) {
       setFocus({ zone: 'retry' });
       return;
     }
-    setFocus(heroItems.length > 0 ? { zone: 'hero' } : { zone: 'row', rowIndex: 0, colIndex: 0 });
+    setFocus(
+      heroItems.length > 0
+        ? { zone: 'hero' }
+        : { zone: 'row', rowIndex: 0, colIndex: 0 }
+    );
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, [showEmptyOrErrorScreen, heroItems.length]);
 
@@ -603,13 +943,17 @@ export default function App() {
 
   const handleOpenCard = useCallback(
     (item: RowItem, rowIndex: number, colIndex: number) => {
+      if (item.id === STORE_CARD_ID) {
+        openStore({ zone: 'row', rowIndex, colIndex });
+        return;
+      }
       void executeLaunch(item.id, item.name, {
         zone: 'row',
         rowIndex,
         colIndex,
       });
     },
-    [executeLaunch]
+    [openStore, executeLaunch]
   );
 
   // Unified spatial input router for both Keyboard and Gamepad API
@@ -667,23 +1011,119 @@ export default function App() {
         return;
       }
 
-      // 2. Empty / API failure screen spatial focus (Retry button <-> TopBar Settings)
+      // 2. Store Detail Panel spatial focus (one focusable button + Back)
+      if (storeOpen && selectedStoreItem) {
+        if (action === 'back') {
+          setSelectedStoreItemId(null);
+          return;
+        }
+        if (action === 'activate') {
+          const isBusy =
+            selectedStoreItem.job?.state === 'queued' ||
+            selectedStoreItem.job?.state === 'running' ||
+            submittingStoreItemId !== null;
+          if (!isBusy) {
+            void handleStoreAction(
+              selectedStoreItem,
+              selectedStoreItem.installed ? 'remove' : 'install'
+            );
+          }
+        }
+        return;
+      }
+
+      // 3. Full-Screen Store View spatial focus
+      if (storeOpen) {
+        if (action === 'back') {
+          closeStore();
+          return;
+        }
+
+        if (storeError !== null || storeRows.length === 0) {
+          if (action === 'activate') {
+            void loadStore({ isManualRetry: true });
+          }
+          return;
+        }
+
+        const currentRow = storeRows[storeFocus.rowIndex];
+        if (!currentRow) {
+          handleFocusStoreCard(0, 0);
+          return;
+        }
+
+        if (action === 'left') {
+          handleFocusStoreCard(
+            storeFocus.rowIndex,
+            Math.max(0, storeFocus.colIndex - 1)
+          );
+        } else if (action === 'right') {
+          handleFocusStoreCard(
+            storeFocus.rowIndex,
+            Math.min(currentRow.items.length - 1, storeFocus.colIndex + 1)
+          );
+        } else if (action === 'up') {
+          if (storeFocus.rowIndex > 0) {
+            const nextRowIdx = storeFocus.rowIndex - 1;
+            const nextRow = storeRows[nextRowIdx];
+            const rememberedCol = storeRowMemory[nextRowIdx] ?? 0;
+            const clampedCol = Math.min(
+              rememberedCol,
+              Math.max(0, nextRow.items.length - 1)
+            );
+            handleFocusStoreCard(nextRowIdx, clampedCol);
+          }
+        } else if (action === 'down') {
+          if (storeFocus.rowIndex < storeRows.length - 1) {
+            const nextRowIdx = storeFocus.rowIndex + 1;
+            const nextRow = storeRows[nextRowIdx];
+            const rememberedCol = storeRowMemory[nextRowIdx] ?? 0;
+            const clampedCol = Math.min(
+              rememberedCol,
+              Math.max(0, nextRow.items.length - 1)
+            );
+            handleFocusStoreCard(nextRowIdx, clampedCol);
+          }
+        } else if (action === 'activate') {
+          const item = currentRow.items[storeFocus.colIndex];
+          if (item) {
+            setSelectedStoreItemId(item.id);
+          }
+        }
+        return;
+      }
+
+      // 4. Empty / API failure screen spatial focus (Retry button <-> TopBar)
       if (showEmptyOrErrorScreen) {
         if (action === 'back') {
           setFocus({ zone: 'retry' });
           return;
         }
         if (action === 'up') {
-          setFocus({ zone: 'topbar' });
+          handleFocusTopBar(lastTopBarButtonRef.current);
           return;
         }
         if (action === 'down') {
           setFocus({ zone: 'retry' });
           return;
         }
+        if (focus.zone === 'topbar') {
+          if (action === 'left') {
+            handleFocusTopBar('store');
+            return;
+          }
+          if (action === 'right') {
+            handleFocusTopBar('settings');
+            return;
+          }
+        }
         if (action === 'activate') {
           if (focus.zone === 'topbar') {
-            openSettings();
+            if (focus.button === 'store') {
+              openStore({ zone: 'topbar', button: 'store' });
+            } else {
+              openSettings();
+            }
           } else {
             void loadApps({ isManualRetry: true });
           }
@@ -691,7 +1131,7 @@ export default function App() {
         return;
       }
 
-      // 3. Main Launcher spatial focus
+      // 5. Main Home Launcher spatial focus
       if (action === 'back') {
         handleResetFocus();
         return;
@@ -699,7 +1139,11 @@ export default function App() {
 
       if (action === 'activate') {
         if (focus.zone === 'topbar') {
-          openSettings();
+          if (focus.button === 'store') {
+            openStore({ zone: 'topbar', button: 'store' });
+          } else {
+            openSettings();
+          }
         } else if (focus.zone === 'hero') {
           const active = heroItems[heroIndex];
           if (active) {
@@ -716,7 +1160,11 @@ export default function App() {
       }
 
       if (focus.zone === 'topbar') {
-        if (action === 'down') {
+        if (action === 'left') {
+          handleFocusTopBar('store');
+        } else if (action === 'right') {
+          handleFocusTopBar('settings');
+        } else if (action === 'down') {
           if (heroItems.length > 0) {
             setFocus({ zone: 'hero' });
           } else if (rows.length > 0) {
@@ -728,7 +1176,7 @@ export default function App() {
 
       if (focus.zone === 'hero') {
         if (action === 'up') {
-          setFocus({ zone: 'topbar' });
+          handleFocusTopBar(lastTopBarButtonRef.current);
           window.scrollTo({ top: 0, behavior: 'smooth' });
         } else if (action === 'down' && rows.length > 0) {
           const savedCol = rowMemory[0] ?? 0;
@@ -767,7 +1215,11 @@ export default function App() {
         handleFocusCard(focus.rowIndex, nextCol);
       } else if (action === 'up') {
         if (focus.rowIndex === 0) {
-          setFocus(heroItems.length > 0 ? { zone: 'hero' } : { zone: 'topbar' });
+          if (heroItems.length > 0) {
+            setFocus({ zone: 'hero' });
+          } else {
+            handleFocusTopBar(lastTopBarButtonRef.current);
+          }
           window.scrollTo({ top: 0, behavior: 'smooth' });
         } else {
           const nextRowIdx = focus.rowIndex - 1;
@@ -797,6 +1249,13 @@ export default function App() {
       activeOverlayId,
       settingsOpen,
       settingsFocusIndex,
+      storeOpen,
+      selectedStoreItem,
+      submittingStoreItemId,
+      storeError,
+      storeRows,
+      storeFocus,
+      storeRowMemory,
       showEmptyOrErrorScreen,
       focus,
       heroIndex,
@@ -807,6 +1266,12 @@ export default function App() {
       closeSettings,
       handleSettingsFocusChange,
       handleTriggerPower,
+      handleStoreAction,
+      closeStore,
+      loadStore,
+      handleFocusStoreCard,
+      openStore,
+      handleFocusTopBar,
       loadApps,
       handleOpenHero,
       handleOpenCard,
@@ -872,12 +1337,13 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [screensaverActive, wakeScreensaver, resetIdleTimer, handleSpatialAction]);
 
-  // Gentle hero auto-advance when idle and no overlay/screensaver/card override is active
+  // Gentle hero auto-advance when idle and no overlay/screensaver/Store/card override is active
   useEffect(() => {
     if (
       !settings.autoAdvanceHero ||
       heroItems.length <= 1 ||
       settingsOpen ||
+      storeOpen ||
       activeOverlayId !== null ||
       screensaverActive ||
       showEmptyOrErrorScreen ||
@@ -895,6 +1361,7 @@ export default function App() {
     settings.autoAdvanceHero,
     heroItems.length,
     settingsOpen,
+    storeOpen,
     activeOverlayId,
     screensaverActive,
     showEmptyOrErrorScreen,
@@ -903,19 +1370,23 @@ export default function App() {
   ]);
 
   const screensaverBackdrops = heroItems.length > 0 ? heroItems : mockData.hero;
+  const homeInteractive =
+    !settingsOpen &&
+    !storeOpen &&
+    !screensaverActive &&
+    activeOverlayId === null;
 
   return (
     <div className="relative min-h-screen w-full bg-[#090B10] text-[#F1F5F9]">
       {/* Top Bar */}
       <TopBar
         use24HourClock={settings.use24HourClock}
-        isSettingsFocused={
-          !settingsOpen &&
-          !screensaverActive &&
-          activeOverlayId === null &&
-          focus.zone === 'topbar'
+        focusedButton={
+          homeInteractive && focus.zone === 'topbar' ? focus.button : null
         }
-        onFocusSettings={() => setFocus({ zone: 'topbar' })}
+        onFocusStore={() => handleFocusTopBar('store')}
+        onOpenStore={() => openStore({ zone: 'topbar', button: 'store' })}
+        onFocusSettings={() => handleFocusTopBar('settings')}
         onOpenSettings={openSettings}
       />
 
@@ -924,19 +1395,16 @@ export default function App() {
         <main>
           <EmptyErrorState
             title={
-              apiErrorMessage ? 'xLab TV service unavailable' : 'No apps available'
+              apiErrorMessage
+                ? 'xLab TV service unavailable'
+                : 'No apps available'
             }
             description={
               apiErrorMessage ??
               'Your app library is currently empty. Check your xLab TV configuration or press Retry to reload.'
             }
             retrying={retryingApps}
-            isRetryFocused={
-              !settingsOpen &&
-              !screensaverActive &&
-              activeOverlayId === null &&
-              focus.zone !== 'topbar'
-            }
+            isRetryFocused={homeInteractive && focus.zone !== 'topbar'}
             onFocusRetry={() => setFocus({ zone: 'retry' })}
             onRetry={() => void loadApps({ isManualRetry: true })}
           />
@@ -946,12 +1414,7 @@ export default function App() {
           <HeroBanner
             items={heroItems}
             activeIndex={heroIndex}
-            isHeroFocused={
-              !settingsOpen &&
-              !screensaverActive &&
-              activeOverlayId === null &&
-              focus.zone === 'hero'
-            }
+            isHeroFocused={homeInteractive && focus.zone === 'hero'}
             overrideBackdrop={focusedItemBackdrop}
             backdropPool={backdropPool}
             appNameById={appNameById}
@@ -967,9 +1430,7 @@ export default function App() {
                 row={row}
                 rowIndex={rowIndex}
                 isRowFocused={
-                  !settingsOpen &&
-                  !screensaverActive &&
-                  activeOverlayId === null &&
+                  homeInteractive &&
                   focus.zone === 'row' &&
                   focus.rowIndex === rowIndex
                 }
@@ -1001,6 +1462,44 @@ export default function App() {
             </footer>
           )}
         </main>
+      )}
+
+      {/* Full-Screen Store View */}
+      {storeOpen && (
+        <StoreView
+          rows={storeRows}
+          use24HourClock={settings.use24HourClock}
+          showSubtitles={settings.showSubtitles}
+          activeJobCount={activeStoreJobCount}
+          errorMessage={storeError}
+          retrying={retryingStore}
+          focusedRowIndex={storeFocus.rowIndex}
+          focusedColIndex={storeFocus.colIndex}
+          rowMemory={storeRowMemory}
+          isGridActive={
+            !settingsOpen &&
+            !screensaverActive &&
+            activeOverlayId === null &&
+            selectedStoreItem === null
+          }
+          onFocusCard={handleFocusStoreCard}
+          onSelectCard={(item, rowIndex, colIndex) => {
+            handleFocusStoreCard(rowIndex, colIndex);
+            setSelectedStoreItemId(item.id);
+          }}
+          onRetry={() => void loadStore({ isManualRetry: true })}
+          onClose={closeStore}
+        />
+      )}
+
+      {/* Store Item Detail Panel */}
+      {storeOpen && selectedStoreItem && (
+        <StoreDetailPanel
+          item={selectedStoreItem}
+          submitting={submittingStoreItemId === selectedStoreItem.id}
+          onAction={(item, action) => void handleStoreAction(item, action)}
+          onClose={() => setSelectedStoreItemId(null)}
+        />
       )}
 
       {/* Settings Side Panel with Sleep, Restart, Shut down, Exit to desktop */}
@@ -1044,7 +1543,7 @@ export default function App() {
         onWake={wakeScreensaver}
       />
 
-      {/* Error & Power Action Toast */}
+      {/* Error & Job Completion Toast */}
       <Toast toast={toast} />
     </div>
   );

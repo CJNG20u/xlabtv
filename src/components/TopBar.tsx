@@ -1,9 +1,13 @@
 import { useEffect, useState } from 'react';
-import { Settings } from 'lucide-react';
+import { Settings, ShoppingBag } from 'lucide-react';
+
+export type TopBarButton = 'store' | 'settings';
 
 interface TopBarProps {
   use24HourClock: boolean;
-  isSettingsFocused: boolean;
+  focusedButton: TopBarButton | null;
+  onFocusStore: () => void;
+  onOpenStore: () => void;
   onFocusSettings: () => void;
   onOpenSettings: () => void;
 }
@@ -29,7 +33,9 @@ function getGreeting(date: Date): string {
 
 export function TopBar({
   use24HourClock,
-  isSettingsFocused,
+  focusedButton,
+  onFocusStore,
+  onOpenStore,
   onFocusSettings,
   onOpenSettings,
 }: TopBarProps) {
@@ -74,6 +80,9 @@ export function TopBar({
     };
   }, [use24HourClock]);
 
+  const isStoreFocused = focusedButton === 'store';
+  const isSettingsFocused = focusedButton === 'settings';
+
   return (
     <header
       className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-center justify-between px-16 pt-8 pb-12"
@@ -116,14 +125,35 @@ export function TopBar({
         </span>
       </div>
 
-      {/* Right: Live Clock + Settings Button */}
-      <div className="pointer-events-auto flex items-center gap-6 shrink-0">
+      {/* Right: Live Clock + Store Button + Settings Button */}
+      <div className="pointer-events-auto flex items-center gap-5 shrink-0">
         <time
           aria-label="Current time"
-          className="font-display text-[1.75rem] leading-none font-medium tracking-[-0.015em] text-[#E2E8F0] tabular-nums whitespace-nowrap select-none"
+          className="mr-1 font-display text-[1.75rem] leading-none font-medium tracking-[-0.015em] text-[#E2E8F0] tabular-nums whitespace-nowrap select-none"
         >
           {clockState.timeText}
         </time>
+
+        <button
+          type="button"
+          onClick={onOpenStore}
+          onMouseEnter={onFocusStore}
+          onFocus={onFocusStore}
+          aria-label="Open Store"
+          aria-current={isStoreFocused ? 'true' : undefined}
+          className={`tv-card relative flex h-[3.25rem] items-center gap-2.5 rounded-full border border-white/15 bg-[#151A24] px-5 text-[1.125rem] font-semibold text-[#E2E8F0] whitespace-nowrap focus:outline-none ${
+            isStoreFocused ? 'tv-btn-focused text-white' : ''
+          }`}
+        >
+          <ShoppingBag className="h-[1.35rem] w-[1.35rem]" strokeWidth={2} />
+          <span>Store</span>
+          <span
+            aria-hidden="true"
+            className={`tv-focus-ring pointer-events-none absolute -inset-[3px] rounded-full border-[3px] border-[#38BDF8] ${
+              isStoreFocused ? 'tv-focus-ring-active' : ''
+            }`}
+          />
+        </button>
 
         <button
           type="button"
