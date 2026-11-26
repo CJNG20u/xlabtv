@@ -6,7 +6,7 @@ pick an app with a remote or controller, and come back to the launcher when it c
 ```
 login (Ubuntu desktop) ──► autostart: xlab-tv-kiosk
                    ├── xlab-tv service   127.0.0.1:8765  (lists, launches, power)
-                   └── Firefox --kiosk ─► the launcher UI (dist/)
+                   └── xLab TV window (GTK + WebKit) ─► the launcher UI (dist/)
                          └── launched app opens on top, closes back to the launcher
 ```
 

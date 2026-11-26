@@ -16,6 +16,7 @@ log "session starting (prefix $PREFIX, port $PORT)"
 # the profile (Ubuntu keeps a logged-out user's processes): stop them first.
 pkill -u "$(id -u)" -f '^python3 [^ ]*/xlabtv/server\.py' 2>/dev/null && sleep 1
 pkill -u "$(id -u)" -f -- '--profile [^ ]*(xlab-tv-profile|xlab-tv/firefox-profile)' 2>/dev/null && sleep 1
+pkill -u "$(id -u)" -f '^python3 [^ ]*/xlabtv/window\.py' 2>/dev/null && sleep 1
 
 rm -f "$STATE/port"
 python3 "$PREFIX/xlabtv/server.py" --ui "$PREFIX/ui/dist" --port "$PORT" \
@@ -48,17 +49,27 @@ else
     PROFILE=$STATE/firefox-profile
 fi
 
+# xLab TV's own window (GTK + WebKit) when its packages are installed, else Firefox.
+if python3 -c "import gi; gi.require_version('Gtk', '4.0'); gi.require_version('WebKit', '6.0'); from gi.repository import WebKit" 2>/dev/null; then
+    WINDOW=own
+else
+    WINDOW=firefox
+    log "GTK/WebKit packages missing (gir1.2-webkit-6.0), using Firefox"
+fi
+
 start_browser() {
     if [ -n "${XLAB_TV_BROWSER:-}" ]; then
         # shellcheck disable=SC2086
         $XLAB_TV_BROWSER "$URL"
-        return
+    elif [ "$WINDOW" = own ]; then
+        python3 "$PREFIX/xlabtv/window.py" "$URL"
+    else
+        mkdir -p "$PROFILE"
+        cp -f "$PREFIX/session/user.js" "$PROFILE/user.js"
+        # only this session uses the profile: clear a lock left by a crash
+        rm -f "$PROFILE/lock" "$PROFILE/.parentlock"
+        MOZ_ENABLE_WAYLAND=1 "$FIREFOX" --kiosk --no-remote --profile "$PROFILE" "$URL"
     fi
-    mkdir -p "$PROFILE"
-    cp -f "$PREFIX/session/user.js" "$PROFILE/user.js"
-    # only this session uses the profile: clear a lock left by a crash
-    rm -f "$PROFILE/lock" "$PROFILE/.parentlock"
-    MOZ_ENABLE_WAYLAND=1 "$FIREFOX" --kiosk --no-remote --profile "$PROFILE" "$URL"
 }
 
 # Keep the launcher on screen: if the browser closes or crashes, start it again.

@@ -16,13 +16,17 @@ fi
 
 echo "==> Installing packages"
 sudo apt-get update -qq
-sudo apt-get install -y python3 firefox
+sudo apt-get install -y python3 python3-gi gir1.2-gtk-4.0 gir1.2-webkit-6.0
 
 echo "==> Copying xLab TV to $PREFIX"
 sudo mkdir -p "$PREFIX/xlabtv" "$PREFIX/session" "$PREFIX/ui"
-sudo install -m 0644 xlabtv/server.py xlabtv/fallback.html "$PREFIX/xlabtv/"
+sudo install -m 0644 xlabtv/server.py xlabtv/window.py xlabtv/fallback.html "$PREFIX/xlabtv/"
 sudo install -m 0755 session/xlab-tv-kiosk "$PREFIX/session/"
 sudo install -m 0644 session/user.js "$PREFIX/session/"
+# name and icon for the window in the app switcher
+sudo install -Dm 0644 session/tv.xlab.Launcher.desktop /usr/share/applications/tv.xlab.Launcher.desktop
+sudo install -Dm 0644 session/tv.xlab.Launcher.svg /usr/share/icons/hicolor/scalable/apps/tv.xlab.Launcher.svg
+sudo gtk-update-icon-cache -q /usr/share/icons/hicolor 2>/dev/null || true
 if [ ! -f dist/index.html ]; then
     if command -v npm >/dev/null 2>&1; then
         echo "==> Building the UI"

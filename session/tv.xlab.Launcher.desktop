@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=xLab TV
+Comment=TV home screen
+Icon=tv.xlab.Launcher
+Exec=/usr/lib/xlab-tv/session/xlab-tv-kiosk
+NoDisplay=true
+StartupWMClass=tv.xlab.Launcher
