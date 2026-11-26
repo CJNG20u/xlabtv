@@ -219,9 +219,14 @@ class UpdateChecker:
     """Counts what Updates would install, checked in the background (soon after start,
     then every 6 hours). Nothing is installed here: that's the Updates tile's job."""
 
+    LATEST_VERSION = "https://github.com/CJNG20u/xlabtv/releases/download/latest/VERSION"
+
     def __init__(self, source_dir_file: Path = Path("/usr/lib/xlab-tv/source-dir"), run=default_run,
-                 first_after: float = 120, every: float = 6 * 3600, start=True):
+                 first_after: float = 120, every: float = 6 * 3600, start=True,
+                 version_file: Path = Path("/usr/lib/xlab-tv/version"), fetch=None):
         self.source_dir_file, self.run = source_dir_file, run
+        self.version_file = version_file
+        self.fetch = fetch or _fetch_text
         self.state = {"xlabtv": False, "apps": 0, "system": 0, "total": 0, "checked": None}
         self._lock = threading.Lock()
         if start:
@@ -244,10 +249,16 @@ class UpdateChecker:
         xlabtv = False
         try:
             repo = self.source_dir_file.read_text().strip()
-            if repo and self.run(["git", "-C", repo, "fetch", "-q"], 60)[0] == 0:
-                code, out, _ = self.run(["git", "-C", repo, "rev-list", "--count", "HEAD..@{u}"], 10)
-                xlabtv = code == 0 and out.strip().isdigit() and int(out.strip()) > 0
-        except (OSError, SettingsError):
+            if repo and Path(repo, ".git").exists():
+                # a git checkout: commits waiting upstream
+                if self.run(["git", "-C", repo, "fetch", "-q"], 60)[0] == 0:
+                    code, out, _ = self.run(["git", "-C", repo, "rev-list", "--count", "HEAD..@{u}"], 10)
+                    xlabtv = code == 0 and out.strip().isdigit() and int(out.strip()) > 0
+            else:
+                # a ready-made package: a newer one published
+                latest = self.fetch(self.LATEST_VERSION).strip()
+                xlabtv = bool(latest) and latest != self.version_file.read_text().strip()
+        except (OSError, SettingsError, ValueError):
             pass
         apps = 0
         try:
@@ -267,3 +278,10 @@ class UpdateChecker:
         with self._lock:
             self.state = state
         return state
+
+
+def _fetch_text(url: str) -> str:
+    import urllib.request
+    req = urllib.request.Request(url, headers={"User-Agent": "xlab-tv"})
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        return resp.read(200).decode("utf-8", "replace")

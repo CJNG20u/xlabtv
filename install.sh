@@ -1,5 +1,6 @@
 #!/bin/sh
-# Installs xLab TV on Ubuntu. Run from the repo folder as your normal user:
+# Installs xLab TV on Ubuntu, from a git checkout or a ready-made package (get.sh).
+# Run from that folder as your normal user:
 #   sh install.sh                the launcher opens full screen when you log in
 #   sh install.sh --autologin    also log in automatically and keep the screen on
 set -eu
@@ -32,12 +33,13 @@ sudo install -m 0644 session/user.js "$PREFIX/session/"
 sudo install -Dm 0644 session/tv.xlab.Launcher.desktop /usr/share/applications/tv.xlab.Launcher.desktop
 sudo install -Dm 0644 session/tv.xlab.Launcher.svg /usr/share/icons/hicolor/scalable/apps/tv.xlab.Launcher.svg
 sudo gtk-update-icon-cache -q /usr/share/icons/hicolor 2>/dev/null || true
-# Build the UI every time, so a git pull brings the latest screens.
-if command -v npm >/dev/null 2>&1; then
+# A ready-made package (get.sh) brings the UI already built; a git checkout builds it,
+# every time, so a git pull brings the latest screens.
+if [ -f package.json ] && command -v npm >/dev/null 2>&1; then
     echo "==> Building the UI"
     npm install --no-audit --no-fund --legacy-peer-deps && npm run build
 elif [ ! -f dist/index.html ]; then
-    echo "    (no npm: install nodejs + npm and re-run to build the UI; using the built-in page for now)"
+    echo "    (no built UI: use get.sh, or install nodejs + npm and re-run; using the built-in page for now)"
 fi
 if [ -f dist/index.html ]; then
     sudo rm -rf "$PREFIX/ui/dist"
@@ -57,8 +59,13 @@ if command -v ufw >/dev/null 2>&1 && sudo ufw status | grep -q "Status: active";
     sudo ufw allow 8766/tcp comment "xLab TV phone remote" >/dev/null
 fi
 
-# Where this checkout is, for the update check behind the gear's badge.
+# Where this copy is and which version, for the update check behind the gear's badge.
 pwd | sudo tee "$PREFIX/source-dir" >/dev/null
+if [ -f VERSION ]; then
+    sudo cp VERSION "$PREFIX/version"
+else
+    echo "git-$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" | sudo tee "$PREFIX/version" >/dev/null
+fi
 
 # The "Updates" tile runs this; it knows where this checkout is.
 sed "s|@REPO@|$(pwd)|" session/xlab-tv-update | sudo tee /usr/local/bin/xlab-tv-update >/dev/null

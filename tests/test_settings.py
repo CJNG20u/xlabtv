@@ -122,16 +122,32 @@ class AudioTests(unittest.TestCase):
 class UpdatesTests(unittest.TestCase):
     def test_counts(self):
         with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "xlabtv"
+            (repo / ".git").mkdir(parents=True)
             src = Path(tmp) / "source-dir"
-            src.write_text("/home/u/xlabtv\n")
+            src.write_text(f"{repo}\n")
             run = FakeRun({
-                ("git", "-C", "/home/u/xlabtv", "fetch"): (0, "", ""),
-                ("git", "-C", "/home/u/xlabtv", "rev-list"): (0, "3\n", ""),
+                ("git", "-C", str(repo), "fetch"): (0, "", ""),
+                ("git", "-C", str(repo), "rev-list"): (0, "3\n", ""),
                 ("flatpak", "remote-ls"): (0, "rocks.shy.VacuumTube\norg.videolan.VLC\n", ""),
                 ("/usr/lib/update-notifier/apt-check",): (0, "", "12;3"),
             })
             st = settings.UpdateChecker(src, run, start=False).check()
         self.assertEqual((st["xlabtv"], st["apps"], st["system"], st["total"]), (True, 2, 12, 15))
+
+    def test_package_install_compares_versions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pkg = Path(tmp) / "xlab-tv-source"
+            pkg.mkdir()
+            src, ver = Path(tmp) / "source-dir", Path(tmp) / "version"
+            src.write_text(str(pkg))
+            ver.write_text("2026.11.26-abc1234\n")
+            quiet = FakeRun({("/usr/lib/update-notifier/apt-check",): (0, "", "0;0")})
+            same = settings.UpdateChecker(src, quiet, start=False, version_file=ver,
+                                          fetch=lambda url: "2026.11.26-abc1234\n").check()
+            newer = settings.UpdateChecker(src, quiet, start=False, version_file=ver,
+                                           fetch=lambda url: "2026.11.27-def5678\n").check()
+        self.assertEqual((same["xlabtv"], newer["xlabtv"], newer["total"]), (False, True, 1))
 
     def test_nothing_available(self):
         def boom(cmd, timeout=15):

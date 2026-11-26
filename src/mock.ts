@@ -1,3 +1,5 @@
+// Sample data below is for development (npm run dev) only: production builds get the
+// empty values, so the TV never shows sample titles and the sample images aren't shipped.
 import heroNordicFjord from './assets/images/hero_nordic_fjord_1795653338547.jpg';
 import heroOrbitalHorizon from './assets/images/hero_orbital_horizon_1795653339988.jpg';
 import heroAlpineRally from './assets/images/hero_alpine_rally_1795653341379.jpg';
@@ -52,7 +54,7 @@ export interface MockData {
   rows: ContentRow[];
 }
 
-export const mockData: MockData = {
+export const mockData: MockData = import.meta.env.DEV ? {
   hero: [
     {
       id: 'cw-northern-passage',
@@ -366,7 +368,7 @@ export const mockData: MockData = {
       ],
     },
   ],
-};
+} : { hero: [], rows: [] };
 
 export type StoreJobAction = 'install' | 'remove';
 export type StoreJobState = 'queued' | 'running' | 'done' | 'failed';
@@ -404,7 +406,7 @@ export const storeCardItem: RowItem = {
   color: '#0284C7',
 };
 
-export const mockStoreData: StorePayload = {
+export const mockStoreData: StorePayload = import.meta.env.DEV ? {
   items: [
     // Watch
     {
@@ -610,7 +612,7 @@ export const mockStoreData: StorePayload = {
       job: null,
     },
   ],
-};
+} : { items: [] };
 
 export interface WifiNetwork {
   ssid: string;
@@ -668,9 +670,9 @@ export interface HiddenAppsPayload {
   apps: HiddenAppItem[];
 }
 
-export const mockOpenApps: string[] = ['nuvio', 'youtube'];
+export const mockOpenApps: string[] = import.meta.env.DEV ? ['nuvio', 'youtube'] : [];
 
-export const mockWifiSettings: WifiSettingsState = {
+export const mockWifiSettings: WifiSettingsState = import.meta.env.DEV ? {
   enabled: true,
   ethernet: true,
   connected: { ssid: 'LivingRoom_5G', signal: 84 },
@@ -680,9 +682,9 @@ export const mockWifiSettings: WifiSettingsState = {
     { ssid: 'Guest_Lounge', signal: 48, secure: false, connected: false },
     { ssid: 'Neighbor_Fiber', signal: 28, secure: true, connected: false },
   ],
-};
+} : { enabled: false, ethernet: false, connected: null, networks: [] };
 
-export const mockBluetoothSettings: BluetoothSettingsState = {
+export const mockBluetoothSettings: BluetoothSettingsState = import.meta.env.DEV ? {
   available: true,
   powered: true,
   devices: [
@@ -705,9 +707,9 @@ export const mockBluetoothSettings: BluetoothSettingsState = {
       connected: false,
     },
   ],
-};
+} : { available: false, powered: false, devices: [] };
 
-export const mockAudioSettings: AudioSettingsState = {
+export const mockAudioSettings: AudioSettingsState = import.meta.env.DEV ? {
   outputs: [
     {
       id: 'alsa_output.pci-0000_00_1f.3.hdmi-stereo',
@@ -727,22 +729,22 @@ export const mockAudioSettings: AudioSettingsState = {
   ],
   volume: 65,
   muted: false,
-};
+} : { outputs: [], volume: 0, muted: false };
 
-export const mockUpdatesInfo: UpdatesInfo = {
+export const mockUpdatesInfo: UpdatesInfo = import.meta.env.DEV ? {
   xlabtv: true,
   apps: 2,
   system: 5,
   total: 8,
   checked: new Date().toISOString(),
-};
+} : { xlabtv: false, apps: 0, system: 0, total: 0, checked: null };
 
-export const mockHiddenApps: HiddenAppsPayload = {
+export const mockHiddenApps: HiddenAppsPayload = import.meta.env.DEV ? {
   apps: [
     { id: 'ambient-loops', name: 'Fireplace & Rain' },
     { id: 'system-shell', name: 'System Shell' },
   ],
-};
+} : { apps: [] };
 
 export default mockData;
 

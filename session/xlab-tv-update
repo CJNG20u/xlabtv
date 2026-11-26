@@ -8,13 +8,23 @@ failed=0
 
 step "xLab TV"
 if [ -d "$REPO/.git" ]; then
+    # a git checkout: pull and reinstall (builds the UI)
     if (cd "$REPO" && git pull --ff-only && sh install.sh); then
         echo "xLab TV is up to date (changes show after the next restart of xLab TV)."
     else
         echo "Could not update xLab TV."; failed=1
     fi
+elif [ -f "$REPO/get.sh" ]; then
+    # installed from the ready-made package: fetch the latest one
+    if [ "$(cat /usr/lib/xlab-tv/version 2>/dev/null)" = "$(wget -qO- https://github.com/CJNG20u/xlabtv/releases/download/latest/VERSION 2>/dev/null)" ]; then
+        echo "xLab TV is already up to date."
+    elif sh "$REPO/get.sh"; then
+        echo "xLab TV is up to date (changes show after the next restart of xLab TV)."
+    else
+        echo "Could not update xLab TV."; failed=1
+    fi
 else
-    echo "No xlabtv checkout at $REPO; skipped."
+    echo "Don't know where xLab TV was installed from ($REPO); skipped."
 fi
 
 step "Apps (Flatpak)"

@@ -169,6 +169,8 @@ function computeDisplayRows(
 
 export default function App() {
   const [launcherData, setLauncherData] = useState<MockData>(mockData);
+  // Production starts empty: wait for the first answer before showing "no apps" / errors.
+  const [appsAnswered, setAppsAnswered] = useState<boolean>(import.meta.env.DEV);
   const [heroIndex, setHeroIndex] = useState<number>(0);
   // Focused element is active and visible immediately on load
   const [focus, setFocus] = useState<FocusState>({ zone: 'hero' });
@@ -324,7 +326,7 @@ export default function App() {
 
   const activeOverlayId = confirmedRunningId ?? pendingLaunch?.id ?? null;
   const isLibraryEmpty = isAppsPayloadEmpty(launcherData);
-  const showEmptyOrErrorScreen = apiErrorMessage !== null || isLibraryEmpty;
+  const showEmptyOrErrorScreen = apiErrorMessage !== null || (appsAnswered && isLibraryEmpty);
 
   const showToast = useCallback(
     (text: string, tone: 'error' | 'info' = 'error') => {
@@ -442,6 +444,7 @@ export default function App() {
         if (options?.signal?.aborted) {
           return;
         }
+        setAppsAnswered(true);
 
         if (result.ok) {
           backendConnectedOnceRef.current = true;

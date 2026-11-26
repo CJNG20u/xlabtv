@@ -12,11 +12,24 @@ login (Ubuntu desktop) ──► autostart: xlab-tv-kiosk
 
 ## Install (Ubuntu 26.04)
 
+One line, from the ready-made package (no git or Node.js needed):
+
 ```sh
-sudo apt install nodejs npm      # to build the UI
+wget -qO- https://github.com/CJNG20u/xlabtv/releases/download/latest/get.sh | sh
+wget -qO- https://github.com/CJNG20u/xlabtv/releases/download/latest/get.sh | sh -s -- --autologin
+```
+
+The second also logs in automatically and keeps the screen on. The **Updates** tile
+(and the gear's badge) then follows new packages. GitHub builds the package on every
+push to `main` that passes the checks, as the rolling **latest** release
+(`xlab-tv.tar.gz`, `get.sh`, `VERSION`).
+
+For development, from a git checkout (builds the UI with Node.js; Updates then does `git pull`):
+
+```sh
+sudo apt install git nodejs npm
 git clone https://github.com/CJNG20u/xlabtv.git && cd xlabtv
-sh install.sh               # the launcher opens full screen when you log in
-sh install.sh --autologin   # also logs in automatically and keeps the screen on
+sh install.sh               # add --autologin to also log in automatically
 ```
 
 ## Apps
