@@ -9,6 +9,7 @@ injected into the UI page, so other web pages cannot drive it.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import mimetypes
 import os
@@ -24,6 +25,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 import apps as apps_catalog  # noqa: E402  (xlabtv/apps.py, beside this file)
+import nuvio  # noqa: E402
 import remote as remote_mod  # noqa: E402
 
 MAX_BODY = 4096
@@ -117,12 +119,48 @@ def load_config(path: Path, detected: dict | None = None, catalog_rows: list | N
     return {"apps": apps, "rows": clean_rows, "hero": hero, "power": bool(raw.get("power", True))}
 
 
+CONTINUE_ROW = "Continue watching"
+
+
+def add_continue_watching(config: dict, detected: dict, source) -> dict:
+    """Put Nuvio's in-progress titles first: a row of their own and the hero's first slide."""
+    nuvio_app = config["apps"].get("nuvio") or detected.get("nuvio")
+    if not nuvio_app or source is None:
+        return config
+    try:
+        items = source()
+    except Exception as exc:  # never let a format change upstream break the launcher
+        print(f"xlab-tv: could not read Nuvio's progress: {exc}", file=sys.stderr)
+        return config
+    ids = []
+    for item in items:
+        item_id = "cw-" + hashlib.sha1(f"{item['type']}:{item['metaId']}".encode()).hexdigest()[:12]
+        config["apps"][item_id] = {
+            "name": item["title"],
+            "subtitle": item["subtitle"],
+            "color": nuvio_app["color"],
+            "row": CONTINUE_ROW,
+            "command": [*nuvio_app["command"], nuvio.deep_link(item)],
+            "media": {},
+            "kind": "media",
+            "progress": item["progress"],
+            "art": {k: item[k] for k in ("backdrop", "poster", "thumbnail", "logo")},
+        }
+        ids.append(item_id)
+    if ids:
+        config["rows"] = [{"title": CONTINUE_ROW, "apps": ids}] + config["rows"]
+        config["hero"] = [ids[0]] + [h for h in config["hero"] if h != ids[0]]
+    return config
+
+
 class Library:
     """The current app list: installed apps are looked up again at most every 30 s."""
 
-    def __init__(self, path: Path, catalog: dict | None = None, detect=None, ttl: float = 30.0):
+    def __init__(self, path: Path, catalog: dict | None = None, detect=None, ttl: float = 30.0,
+                 continue_watching=None):
         self.path = path
         self.catalog = catalog
+        self.continue_watching = continue_watching if continue_watching is not None else nuvio.continue_watching
         self.detect = detect or (lambda: apps_catalog.detect(self.catalog) if self.catalog else {})
         self.ttl = ttl
         self._lock = threading.Lock()
@@ -141,7 +179,8 @@ class Library:
                 rows = self.catalog.get("rows") if self.catalog else None
                 try:
                     self.detected = self.detect()
-                    self._config = load_config(self.path, self.detected, rows)
+                    self._config = add_continue_watching(
+                        load_config(self.path, self.detected, rows), self.detected, self.continue_watching)
                 except ConfigError as exc:
                     if self._config is None:
                         raise
@@ -151,39 +190,51 @@ class Library:
 
 
 def api_apps(config: dict) -> dict:
-    """The /api/apps response: the shape the UI's src/mock.ts uses."""
+    """The /api/apps response: the shape the UI's src/mock.ts uses.
+
+    Continue-watching items carry kind "media", progress (0-1) and artwork URLs
+    (backdrop, poster, thumbnail, logo); apps carry kind "app".
+    """
     apps = config["apps"]
 
     def media_url(app_id: str, key: str) -> str:
         return f"/media/{app_id}/{key}" if key in apps[app_id]["media"] else ""
 
+    def art(app_id: str, key: str) -> str:
+        return apps[app_id].get("art", {}).get(key, "")
+
+    def hero(app_id: str) -> dict:
+        a = apps[app_id]
+        out = {
+            "id": app_id,
+            "appId": app_id,
+            "title": a["name"],
+            "subtitle": a["subtitle"],
+            "backdrop": art(app_id, "backdrop") or media_url(app_id, "backdrop"),
+            "kind": a.get("kind", "app"),
+        }
+        if a.get("kind") == "media":
+            out.update(eyebrow="Continue watching in Nuvio", progress=a["progress"], logo=art(app_id, "logo"))
+        return out
+
+    def item(app_id: str) -> dict:
+        a = apps[app_id]
+        out = {
+            "id": app_id,
+            "name": a["name"],
+            "subtitle": a["subtitle"],
+            "icon": media_url(app_id, "icon"),
+            "color": a["color"],
+            "kind": a.get("kind", "app"),
+        }
+        if a.get("kind") == "media":
+            out.update(progress=a["progress"], backdrop=art(app_id, "thumbnail") or art(app_id, "backdrop"),
+                       poster=art(app_id, "poster"))
+        return out
+
     return {
-        "hero": [
-            {
-                "id": app_id,
-                "appId": app_id,
-                "title": apps[app_id]["name"],
-                "subtitle": apps[app_id]["subtitle"],
-                "backdrop": media_url(app_id, "backdrop"),
-            }
-            for app_id in config["hero"]
-        ],
-        "rows": [
-            {
-                "title": row["title"],
-                "items": [
-                    {
-                        "id": app_id,
-                        "name": apps[app_id]["name"],
-                        "subtitle": apps[app_id]["subtitle"],
-                        "icon": media_url(app_id, "icon"),
-                        "color": apps[app_id]["color"],
-                    }
-                    for app_id in row["apps"]
-                ],
-            }
-            for row in config["rows"]
-        ],
+        "hero": [hero(app_id) for app_id in config["hero"]],
+        "rows": [{"title": row["title"], "items": [item(i) for i in row["apps"]]} for row in config["rows"]],
         "power": config["power"],
     }
 

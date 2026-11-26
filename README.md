@@ -67,6 +67,18 @@ Optional keys per app: `icon` and `backdrop` (image paths). Check your edits wit
 Netflix, Prime Video and Disney+ open in Chrome (install with `xlab-tv-apps install netflix`);
 on Linux these services stream at lower resolution than on a TV or streaming stick.
 
+## Continue watching (Nuvio)
+
+When Nuvio is installed, xLab TV reads its watch progress (read-only, from
+`~/.config/nuviohtpc` or the Flatpak's `~/.var/app/com.nuvio.media.desktop/config/nuviohtpc`)
+and adds a **Continue watching** row, newest first, one card per show, plus the latest
+title as the hero's first slide. Selecting one opens it in Nuvio through its
+`nuvio://meta?type=…&id=…` link. The list refreshes at most every 30 s.
+
+In `/api/apps`, these items have `kind: "media"`, `progress` (0 to 1) and artwork URLs
+(`backdrop`, `poster` on cards; `backdrop`, `logo`, `eyebrow` on the hero); apps have
+`kind: "app"`.
+
 ## Phone remote
 
 The service also serves a remote for your phone on the home network

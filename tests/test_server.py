@@ -80,9 +80,9 @@ class ConfigTests(unittest.TestCase):
     def test_api_shape_matches_ui_contract(self):
         cfg = server.load_config(write_config(self.dir, BASE))
         data = server.api_apps(cfg)
-        self.assertEqual(set(data["hero"][0]), {"id", "appId", "title", "subtitle", "backdrop"})
+        self.assertEqual(set(data["hero"][0]), {"id", "appId", "title", "subtitle", "backdrop", "kind"})
         item = data["rows"][0]["items"][0]
-        self.assertEqual(set(item), {"id", "name", "subtitle", "icon", "color"})
+        self.assertEqual(set(item), {"id", "name", "subtitle", "icon", "color", "kind"})
         self.assertEqual(item["icon"], "/media/sleeper/icon")
 
 

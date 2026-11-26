@@ -279,7 +279,7 @@ def make_remote_handler(pairing: Pairing, vinput: VirtualInput, library, launche
                 cfg = library.get()
                 apps = [{"id": i, "name": a["name"], "color": a["color"],
                          "icon": f"/remote/icon/{i}" if a["media"].get("icon") else ""}
-                        for i, a in cfg["apps"].items()]
+                        for i, a in cfg["apps"].items() if a.get("kind") != "media"]
                 return self._json(200, {"apps": apps, "running": launcher.status(),
                                         "input": vinput.error is None, "wake": wake_info()})
             if path.startswith("/remote/icon/"):
