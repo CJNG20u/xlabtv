@@ -1,0 +1,45 @@
+#!/bin/sh
+# Runs inside cage: starts the xLab TV service, then a full-screen browser on it.
+# Apps launched from the UI open on top; closing them shows the launcher again.
+# Choosing "exit" in the UI stops the service, which ends this script and the session.
+set -u
+
+PREFIX=${XLAB_TV_PREFIX:-/usr/lib/xlab-tv}
+PORT=${XLAB_TV_PORT:-8765}
+STATE=${XDG_STATE_HOME:-$HOME/.local/state}/xlab-tv
+mkdir -p "$STATE"
+
+python3 "$PREFIX/xlabtv/server.py" --ui "$PREFIX/ui/dist" --port "$PORT" \
+    --log "$STATE/apps.log" >>"$STATE/service.log" 2>&1 &
+SERVER=$!
+
+# wait up to 10 s for the service to answer
+i=0
+while ! python3 -c "import socket,sys; socket.create_connection(('127.0.0.1', $PORT), 0.5)" 2>/dev/null; do
+    i=$((i + 1))
+    if [ "$i" -ge 20 ] || ! kill -0 "$SERVER" 2>/dev/null; then
+        echo "xlab-tv: service did not start, see $STATE/service.log" >&2
+        exit 1
+    fi
+    sleep 0.5
+done
+
+URL="http://127.0.0.1:$PORT/"
+if [ -n "${XLAB_TV_BROWSER:-}" ]; then
+    # shellcheck disable=SC2086
+    $XLAB_TV_BROWSER "$URL" &
+else
+    # Firefox in kiosk mode with its own profile (Ubuntu's Firefox is a snap, which
+    # can only use profiles under ~/snap/firefox/common).
+    case "$(command -v firefox)" in
+        /snap/*) PROFILE=$HOME/snap/firefox/common/xlab-tv-profile ;;
+        *) PROFILE=$STATE/firefox-profile ;;
+    esac
+    mkdir -p "$PROFILE"
+    cp -f "$PREFIX/session/user.js" "$PROFILE/user.js"
+    MOZ_ENABLE_WAYLAND=1 firefox --kiosk --no-remote --profile "$PROFILE" "$URL" &
+fi
+BROWSER=$!
+
+wait "$SERVER"
+kill "$BROWSER" 2>/dev/null

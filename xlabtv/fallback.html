@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>xLab TV</title>
+<style>
+  :root { --accent: #8b5cf6; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #0b0d12; color: #f4f4f5;
+    font: 500 1.6vw/1.3 system-ui, sans-serif; overflow: hidden; cursor: none; }
+  header { display: flex; justify-content: space-between; padding: 3vh 4vw; font-size: 2vw; }
+  header b { letter-spacing: .05em; }
+  h2 { margin: 2vh 4vw 1.5vh; font-size: 1.6vw; color: #a1a1aa; }
+  .row { display: flex; gap: 2vw; padding: 1vh 4vw 3vh; }
+  .card { width: 16vw; aspect-ratio: 16/9; border-radius: 1vw; display: flex; align-items: flex-end;
+    padding: 1vw; font-size: 1.5vw; font-weight: 700; transition: transform .15s ease;
+    outline: 0.25vw solid transparent; outline-offset: 0.3vw; }
+  .card.focus { transform: scale(1.08); outline-color: var(--accent); }
+  #overlay { position: fixed; inset: 0; background: rgba(0,0,0,.8); display: none;
+    align-items: center; justify-content: center; font-size: 2.4vw; }
+  #note { position: fixed; bottom: 3vh; left: 4vw; color: #71717a; font-size: 1.1vw; }
+</style>
+</head>
+<body>
+<header><b>xLab TV</b><span id="clock"></span></header>
+<main id="rows"></main>
+<div id="overlay"></div>
+<div id="note">Built-in page. Put your designed UI in the ui/ folder to replace it.</div>
+<script>
+const token = document.querySelector('meta[name="xlab-token"]').content;
+const api = (path, body) => fetch(path, body ? { method: 'POST', body: JSON.stringify(body),
+  headers: { 'X-XLab-Token': token, 'Content-Type': 'application/json' } } : { headers: { 'X-XLab-Token': token } })
+  .then(r => r.json());
+let grid = [], r = 0, c = 0, names = {};
+function draw() {
+  document.querySelectorAll('.card').forEach(e => e.classList.remove('focus'));
+  const el = grid[r] && grid[r][c]; if (el) { el.classList.add('focus'); el.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }
+}
+function move(dr, dc) {
+  if (!grid.length) return;
+  r = Math.max(0, Math.min(grid.length - 1, r + dr));
+  c = Math.max(0, Math.min(grid[r].length - 1, c + dc)); draw();
+}
+async function open() {
+  const el = grid[r] && grid[r][c]; if (!el) return;
+  const res = await api('/api/launch', { id: el.dataset.id });
+  if (!res.ok) alert(res.error);
+}
+api('/api/apps').then(data => {
+  const host = document.getElementById('rows');
+  data.rows.forEach(row => {
+    const h = document.createElement('h2'); h.textContent = row.title; host.append(h);
+    const line = document.createElement('div'); line.className = 'row'; host.append(line);
+    grid.push(row.items.map(it => {
+      names[it.id] = it.name;
+      const card = document.createElement('div'); card.className = 'card'; card.dataset.id = it.id;
+      card.textContent = it.name;
+      card.style.background = it.icon ? `center/cover url(${it.icon})` : `linear-gradient(135deg, ${it.color}, #111)`;
+      line.append(card); return card;
+    }));
+  });
+  draw();
+});
+addEventListener('keydown', e => {
+  const k = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] }[e.key];
+  if (k) { move(...k); e.preventDefault(); } else if (e.key === 'Enter' || e.key === ' ') open();
+});
+let last = {};
+(function pad() {
+  for (const gp of navigator.getGamepads ? navigator.getGamepads() : []) {
+    if (!gp) continue;
+    const b = i => gp.buttons[i] && gp.buttons[i].pressed;
+    const now = { u: b(12) || gp.axes[1] < -.6, d: b(13) || gp.axes[1] > .6,
+                  l: b(14) || gp.axes[0] < -.6, rt: b(15) || gp.axes[0] > .6, a: b(0) };
+    if (now.u && !last.u) move(-1, 0); if (now.d && !last.d) move(1, 0);
+    if (now.l && !last.l) move(0, -1); if (now.rt && !last.rt) move(0, 1);
+    if (now.a && !last.a) open(); last = now;
+  }
+  requestAnimationFrame(pad);
+})();
+setInterval(async () => {
+  const { running } = await api('/api/status');
+  const o = document.getElementById('overlay');
+  o.style.display = running ? 'flex' : 'none'; o.textContent = running ? `${names[running]} is open` : '';
+}, 2000);
+setInterval(() => document.getElementById('clock').textContent =
+  new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), 1000);
+</script>
+</body>
+</html>
