@@ -126,6 +126,11 @@ class Library:
         self._lock = threading.Lock()
         self._config: dict | None = None
         self._at = 0.0
+        self.detected: dict = {}
+
+    def invalidate(self) -> None:
+        with self._lock:
+            self._at = 0.0
 
     def get(self) -> dict:
         with self._lock:
@@ -133,7 +138,8 @@ class Library:
             if self._config is None or now - self._at > self.ttl:
                 rows = self.catalog.get("rows") if self.catalog else None
                 try:
-                    self._config = load_config(self.path, self.detect(), rows)
+                    self.detected = self.detect()
+                    self._config = load_config(self.path, self.detected, rows)
                 except ConfigError as exc:
                     if self._config is None:
                         raise
@@ -224,7 +230,7 @@ class Launcher:
 
 
 def make_handler(library, launcher: Launcher, ui_dir: Path | None, token: str, port_ref: list,
-                 on_exit=None, run=subprocess.Popen):
+                 on_exit=None, run=subprocess.Popen, store=None):
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "xlab-tv"
@@ -269,12 +275,17 @@ def make_handler(library, launcher: Launcher, ui_dir: Path | None, token: str, p
                     return self._json(200, api_apps(library.get()))
                 if path == "/api/status":
                     return self._json(200, {"running": launcher.status()})
+                if path == "/api/store" and store is not None:
+                    library.get()
+                    return self._json(200, {"items": store.items(library.detected)})
                 return self._json(404, {"ok": False, "error": "not found"})
             if path.startswith("/media/"):
                 parts = path.split("/")
                 media = None
                 if len(parts) == 4:
                     media = library.get()["apps"].get(parts[2], {}).get("media", {}).get(parts[3])
+                    if media is None and parts[3] == "icon" and store is not None:
+                        media = store.icon_path(parts[2])
                 if media is None or not media.is_file():
                     return self._send(404, b"not found", "text/plain")
                 ctype = mimetypes.guess_type(media.name)[0] or "application/octet-stream"
@@ -336,6 +347,16 @@ def make_handler(library, launcher: Launcher, ui_dir: Path | None, token: str, p
                 except RuntimeError as exc:
                     return self._json(409, {"ok": False, "error": str(exc)})
                 return self._json(200, {"ok": True})
+            if path == "/api/store" and store is not None:
+                try:
+                    store.request(str(body.get("id", "")), str(body.get("action", "")))
+                except KeyError:
+                    return self._json(404, {"ok": False, "error": "unknown app"})
+                except ValueError:
+                    return self._json(400, {"ok": False, "error": "action must be install or remove"})
+                except RuntimeError as exc:
+                    return self._json(409, {"ok": False, "error": str(exc)})
+                return self._json(202, {"ok": True})
             if path == "/api/power":
                 action = body.get("action")
                 if action == "exit" and on_exit:
@@ -369,7 +390,8 @@ def main(argv=None) -> int:
     ap.add_argument("--port-file", type=Path, default=None, help="write the port in use here")
     args = ap.parse_args(argv)
 
-    library = Library(args.config, apps_catalog.load_catalog())
+    catalog = apps_catalog.load_catalog()
+    library = Library(args.config, catalog)
     try:
         config = library.get()
     except ConfigError as exc:
@@ -391,7 +413,9 @@ def main(argv=None) -> int:
     def stop():
         httpd.shutdown()
 
-    handler = make_handler(library, launcher, ui_dir, token, port_ref, on_exit=stop)
+    cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "xlab-tv" / "icons"
+    store = apps_catalog.Store(catalog, cache, on_change=library.invalidate)
+    handler = make_handler(library, launcher, ui_dir, token, port_ref, on_exit=stop, store=store)
     try:
         httpd = ThreadingHTTPServer(("127.0.0.1", args.port), handler)
     except OSError as exc:

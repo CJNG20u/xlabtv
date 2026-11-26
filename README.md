@@ -26,10 +26,16 @@ Nuvio, Stremio, Jellyfin, Plex, Kodi, YouTube (VacuumTube), FreeTube, Spotify, S
 (Big Picture), Moonlight, and Netflix, Prime Video and Disney+ in Chrome. Icons come
 from the installed apps.
 
+Install them from the **Store** on the TV, or from a terminal:
+
 ```sh
 xlab-tv-apps list                          # what's available and installed
-xlab-tv-apps install youtube jellyfin      # Flatpaks from Flathub; "nuvio" gets its .deb
+xlab-tv-apps install youtube jellyfin      # Flatpaks, no password needed
 ```
+
+Everything installs as a per-user Flatpak (Flathub, and Nuvio's own signed repo), so the
+Store needs no password. Store installs can be removed from the Store again; apps
+installed some other way (a .deb, Ubuntu's App Center) are left alone.
 
 New apps show up the next time xLab TV starts (log out and back in). To add your own app,
 hide one, or set your own rows, edit `~/.config/xlab-tv/apps.json`:
@@ -66,6 +72,8 @@ The UI talks to the service through this API. Every `/api/*` call needs the head
 | `GET /api/apps` | | `{hero: [{id, appId, title, subtitle, backdrop}], rows: [{title, items: [{id, name, subtitle, icon, color}]}], power}` |
 | `POST /api/launch` | `{"id": "nuvio"}` | `{ok: true}` or `{ok: false, error}` |
 | `GET /api/status` | | `{running: "nuvio" \| null}` |
+| `GET /api/store` | | `{items: [{id, name, subtitle, description, category, color, icon, installed, job}]}`, `job` = `null` or `{action, state: queued\|running\|done\|failed, message}` |
+| `POST /api/store` | `{"id": "youtube", "action": "install" \| "remove"}` | `{ok: true}` (202), then poll `GET /api/store` |
 | `POST /api/power` | `{"action": "suspend" \| "reboot" \| "poweroff" \| "exit"}` | `{ok: true}` |
 
 `exit` closes the launcher and leaves the Ubuntu desktop.

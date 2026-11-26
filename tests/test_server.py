@@ -100,8 +100,16 @@ class ServerTests(unittest.TestCase):
         self.launcher = server.Launcher(self.library)
         self.power_calls = []
         port_ref = [0]
+        import apps
+        self.store_run = []
+
+        def store_run(cmd, **kw):
+            import subprocess
+            self.store_run.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        self.store = apps.Store(apps.load_catalog(), self.dir / "icons", run=store_run, fetch=lambda u: b"")
         handler = server.make_handler(self.library, self.launcher, ui, TOKEN, port_ref,
-                                      run=lambda cmd, **kw: self.power_calls.append(cmd))
+                                      run=lambda cmd, **kw: self.power_calls.append(cmd), store=self.store)
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         port_ref[0] = self.port = self.httpd.server_address[1]
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
@@ -182,6 +190,20 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.request("POST", "/api/power", {"action": "reboot"})[0], 200)
         self.assertEqual(self.power_calls, [["systemctl", "reboot"]])
         self.assertEqual(self.request("POST", "/api/power", {"action": "rm"})[0], 400)
+
+    def test_store_list_and_install(self):
+        status, body = self.request("GET", "/api/store")
+        items = {i["id"]: i for i in json.loads(body)["items"]}
+        self.assertEqual(status, 200)
+        self.assertFalse(items["youtube"]["installed"])
+        self.assertEqual(self.request("POST", "/api/store", {"id": "youtube", "action": "install"})[0], 202)
+        for _ in range(100):
+            if self.store.jobs["youtube"]["state"] == "done":
+                break
+            time.sleep(0.02)
+        self.assertEqual(self.store_run[-1][-1], "rocks.shy.VacuumTube")
+        self.assertEqual(self.request("POST", "/api/store", {"id": "nope", "action": "install"})[0], 404)
+        self.assertEqual(self.request("POST", "/api/store", {"id": "kodi"}, token=None)[0], 401)
 
     def test_bad_body(self):
         status, _ = self.request("POST", "/api/launch", None, headers={"Content-Length": "0"})

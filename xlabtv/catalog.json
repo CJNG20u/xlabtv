@@ -1,59 +1,25 @@
 {
-  "rows": ["Watch", "Music", "Play"],
-  "apps": {
-    "nuvio": {
-      "name": "Nuvio", "subtitle": "Movies and shows", "row": "Watch", "color": "#7c3aed",
-      "binary": "nuvio-desktop", "flatpak": "com.nuvio.media.desktop", "icon": "com.nuvio.media.desktop",
-      "install": "nuvio-deb"
-    },
-    "stremio": {
-      "name": "Stremio", "subtitle": "Movies and shows", "row": "Watch", "color": "#6d28d9",
-      "flatpak": "com.stremio.Stremio"
-    },
-    "jellyfin": {
-      "name": "Jellyfin", "subtitle": "Your media server", "row": "Watch", "color": "#0284c7",
-      "flatpak": "org.jellyfin.JellyfinDesktop"
-    },
-    "plex": {
-      "name": "Plex", "subtitle": "Your media server", "row": "Watch", "color": "#ca8a04",
-      "flatpak": "tv.plex.PlexHTPC"
-    },
-    "kodi": {
-      "name": "Kodi", "subtitle": "Media center", "row": "Watch", "color": "#0e7490",
-      "binary": "kodi", "flatpak": "tv.kodi.Kodi"
-    },
-    "youtube": {
-      "name": "YouTube", "subtitle": "TV app, no ads (VacuumTube)", "row": "Watch", "color": "#dc2626",
-      "flatpak": "rocks.shy.VacuumTube"
-    },
-    "freetube": {
-      "name": "FreeTube", "subtitle": "Private YouTube", "row": "Watch", "color": "#b91c1c",
-      "flatpak": "io.freetubeapp.FreeTube"
-    },
-    "netflix": {
-      "name": "Netflix", "subtitle": "In Chrome", "row": "Watch", "color": "#991b1b",
-      "web": "https://www.netflix.com/browse"
-    },
-    "prime": {
-      "name": "Prime Video", "subtitle": "In Chrome", "row": "Watch", "color": "#0369a1",
-      "web": "https://www.primevideo.com/"
-    },
-    "disney": {
-      "name": "Disney+", "subtitle": "In Chrome", "row": "Watch", "color": "#1e3a8a",
-      "web": "https://www.disneyplus.com/home"
-    },
-    "spotify": {
-      "name": "Spotify", "subtitle": "Music", "row": "Music", "color": "#15803d",
-      "flatpak": "com.spotify.Client"
-    },
-    "steam": {
-      "name": "Steam", "subtitle": "Big Picture", "row": "Play", "color": "#1e40af",
-      "binary": "steam", "flatpak": "com.valvesoftware.Steam", "args": ["-gamepadui"]
-    },
-    "moonlight": {
-      "name": "Moonlight", "subtitle": "Stream games from your PC", "row": "Play", "color": "#4338ca",
-      "flatpak": "com.moonlight_stream.Moonlight"
-    }
+  "rows": ["Watch", "Music", "Play", "Web"],
+  "remotes": {
+      "flathub": "https://dl.flathub.org/repo/flathub.flatpakrepo",
+      "nuvio": "https://iamslokker.github.io/NuvioDesktop-Linux/flatpak/nuvio.flatpakrepo"
   },
-  "browser": { "binary": "google-chrome", "flatpak": "com.google.Chrome", "args": ["--start-fullscreen", "--app={url}"] }
+  "apps": {
+    "nuvio": {"name": "Nuvio", "subtitle": "Movies and shows", "row": "Watch", "color": "#7c3aed", "binary": "nuvio-desktop", "flatpak": "com.nuvio.media.desktop", "icon": "com.nuvio.media.desktop", "description": "Browse and stream movies and shows with your add-ons, built for the TV.", "remote": "nuvio"},
+    "stremio": {"name": "Stremio", "subtitle": "Movies and shows", "row": "Watch", "color": "#6d28d9", "flatpak": "com.stremio.Stremio", "description": "Movies, shows and live TV from your Stremio add-ons."},
+    "jellyfin": {"name": "Jellyfin", "subtitle": "Your media server", "row": "Watch", "color": "#0284c7", "flatpak": "org.jellyfin.JellyfinDesktop", "description": "Play your own movies, shows and music from your Jellyfin server."},
+    "plex": {"name": "Plex", "subtitle": "Your media server", "row": "Watch", "color": "#ca8a04", "flatpak": "tv.plex.PlexHTPC", "description": "Plex's big-screen app for your Plex server and free streaming channels."},
+    "kodi": {"name": "Kodi", "subtitle": "Media center", "row": "Watch", "color": "#0e7490", "binary": "kodi", "flatpak": "tv.kodi.Kodi", "description": "The classic media center: local files, network shares, live TV add-ons."},
+    "youtube": {"name": "YouTube", "subtitle": "TV app, no ads (VacuumTube)", "row": "Watch", "color": "#dc2626", "flatpak": "rocks.shy.VacuumTube", "description": "YouTube's TV interface on Linux, with ads blocked (VacuumTube)."},
+    "freetube": {"name": "FreeTube", "subtitle": "Private YouTube", "row": "Watch", "color": "#b91c1c", "flatpak": "io.freetubeapp.FreeTube", "description": "Watch YouTube without ads or tracking, with your own subscriptions."},
+    "netflix": {"name": "Netflix", "subtitle": "In Chrome", "row": "Watch", "color": "#991b1b", "web": "https://www.netflix.com/browse", "description": "Netflix in Chrome. Lower resolution on Linux than on a TV stick."},
+    "prime": {"name": "Prime Video", "subtitle": "In Chrome", "row": "Watch", "color": "#0369a1", "web": "https://www.primevideo.com/", "description": "Prime Video in Chrome. Lower resolution on Linux than on a TV stick."},
+    "disney": {"name": "Disney+", "subtitle": "In Chrome", "row": "Watch", "color": "#1e3a8a", "web": "https://www.disneyplus.com/home", "description": "Disney+ in Chrome. Lower resolution on Linux than on a TV stick."},
+    "spotify": {"name": "Spotify", "subtitle": "Music", "row": "Music", "color": "#15803d", "flatpak": "com.spotify.Client", "description": "Music and podcasts."},
+    "steam": {"name": "Steam", "subtitle": "Big Picture", "row": "Play", "color": "#1e40af", "binary": "steam", "flatpak": "com.valvesoftware.Steam", "args": ["-gamepadui"], "description": "Your Steam games, opened in controller-friendly Big Picture mode."},
+    "moonlight": {"name": "Moonlight", "subtitle": "Stream games from your PC", "row": "Play", "color": "#4338ca", "flatpak": "com.moonlight_stream.Moonlight", "description": "Stream games from your gaming PC (Sunshine or GeForce Experience)."},
+    "firefox": {"name": "Firefox", "subtitle": "Web browser", "row": "Web", "color": "#ea580c", "binary": "firefox", "flatpak": "org.mozilla.firefox", "description": "Browse the web on your TV."},
+    "chrome": {"name": "Chrome", "subtitle": "Web browser", "row": "Web", "color": "#2563eb", "binary": "google-chrome", "flatpak": "com.google.Chrome", "description": "Google's browser. Also needed for Netflix, Prime Video and Disney+."}
+  },
+  "browser": {"binary": "google-chrome", "flatpak": "com.google.Chrome", "args": ["--start-fullscreen", "--app={url}"]}
 }
