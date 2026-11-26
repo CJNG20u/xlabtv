@@ -31,15 +31,10 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(found["youtube"]["command"], ["flatpak", "run", "rocks.shy.VacuumTube"])
         self.assertEqual(found["steam"]["command"], ["flatpak", "run", "com.valvesoftware.Steam", "-gamepadui"])
 
-    def test_nuvio_brings_its_remote_buttons(self):
+    def test_no_app_has_remote_buttons_for_now(self):
+        # Nuvio's buttons were removed: the phone's touchpad works better in Nuvio
         found = apps.detect(CATALOG, {"com.nuvio.media.desktop"}, which_none)
-        groups = found["nuvio"]["buttons"]
-        menu = groups[0]["buttons"][0]
-        self.assertEqual((menu["label"], menu["key"]), ("Menu", "r"))
-        import remote
-        for g in groups:
-            for b in g["buttons"]:
-                self.assertIsNotNone(remote.key_code(b["key"]), b)
+        self.assertNotIn("buttons", found["nuvio"])
 
     def test_binary_wins_over_flatpak(self):
         found = apps.detect(CATALOG, {"com.nuvio.media.desktop"},

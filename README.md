@@ -151,8 +151,8 @@ fullscreen), `POST /remote/text {text}`, `POST /remote/mouse {dx, dy} | {click} 
 `POST /remote/launch {id}`, `POST /remote/power {action}`, `GET /remote/apps`.
 `/remote/key` also takes an app's shortcut letters (`a`-`z`, `0`-`9`) and `f1`-`f12`.
 `GET /remote/apps` includes `appButtons`: the shortcuts of the app in front, from its
-`buttons` in the catalog (`{app, name, groups: [{title, buttons: [{label, key, hint?}]}]}`),
-e.g. Nuvio's Menu (panel ring, R), Search, Live TV, and player menu, subtitles, audio.
+`buttons` in the catalog (`{app, name, groups: [{title, buttons: [{label, key, hint?}]}]}`);
+no app has any at the moment (Nuvio's were removed: the touchpad works better there).
 
 ## The UI
 
