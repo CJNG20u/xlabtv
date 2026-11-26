@@ -171,6 +171,32 @@ class RemoteServerTests(unittest.TestCase):
         self.assertIn(b"xLab TV Remote", body)
         self.assertNotIn(b"xlab-token", body)
 
+    def test_built_ui_serves_remote_route_manifest_and_redirect(self):
+        ui = Path(self.tmp.name) / "dist"
+        ui.mkdir()
+        (ui / "index.html").write_text('<html><head><meta name="xlab-token" content="" /></head></html>')
+        (ui / "manifest.webmanifest").write_text('{"name": "xLab Remote"}')
+        page = Path(__file__).resolve().parents[1] / "xlabtv" / "remote.html"
+        handler = remote.make_remote_handler(self.pairing, remote.VirtualInput(lambda: self.fake), self.library,
+                                             self.launcher, page, ui, self.power.append)
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        try:
+            conn = http.client.HTTPConnection("127.0.0.1", httpd.server_address[1], timeout=5)
+            conn.request("GET", "/")
+            r = conn.getresponse(); r.read()
+            self.assertEqual((r.status, r.getheader("Location")), (302, "/remote"))
+            conn.request("GET", "/manifest.webmanifest")
+            r = conn.getresponse(); r.read()
+            self.assertEqual(r.getheader("Content-Type"), "application/manifest+json")
+            conn.request("GET", "/remote")
+            r = conn.getresponse(); body = r.read()
+            self.assertIn(b'content=""', body)  # the UI's page, with no launcher token filled in
+            conn.close()
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
     def test_everything_needs_pairing(self):
         self.assertEqual(self.call("POST", "/remote/key", {"key": "ok"})[0], 401)
         self.assertEqual(self.call("GET", "/remote/apps")[0], 401)

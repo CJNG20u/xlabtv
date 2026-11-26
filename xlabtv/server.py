@@ -29,6 +29,7 @@ import nuvio  # noqa: E402
 import remote as remote_mod  # noqa: E402
 
 MAX_BODY = 4096
+mimetypes.add_type("application/manifest+json", ".webmanifest")
 POWER_COMMANDS = {
     "suspend": ["systemctl", "suspend"],
     "reboot": ["systemctl", "reboot"],

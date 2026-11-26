@@ -9,6 +9,7 @@ virtual keyboard and mouse (uinput), so they reach every app, not only the launc
 from __future__ import annotations
 
 import json
+import mimetypes
 import os
 import secrets
 import socket
@@ -19,6 +20,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 MAX_BODY = 4096
+mimetypes.add_type("application/manifest+json", ".webmanifest")
 CODE_TTL = 300          # a pairing code is good for 5 minutes...
 CODE_TRIES = 5          # ...or 5 wrong guesses, whichever comes first
 
@@ -292,10 +294,15 @@ def make_remote_handler(pairing: Pairing, vinput: VirtualInput, library, launche
                 return self._send(200, Path(icon).read_bytes(), ctype)
             # The remote page: AI Studio's build (its /remote route) or the built-in page.
             if ui_dir is not None and (ui_dir / "index.html").is_file():
+                if path == "/":
+                    self.send_response(302)
+                    self.send_header("Location", "/remote")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return None
                 root = ui_dir.resolve()
                 target = (root / path.lstrip("/")).resolve()
                 if (root in target.parents) and target.is_file() and target.name != "index.html":
-                    import mimetypes
                     ctype = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
                     return self._send(200, target.read_bytes(), ctype)
                 if path.startswith("/remote"):
