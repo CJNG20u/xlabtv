@@ -9,20 +9,31 @@ PORT=${XLAB_TV_PORT:-8765}
 STATE=${XDG_STATE_HOME:-$HOME/.local/state}/xlab-tv
 mkdir -p "$STATE"
 
+log() { echo "$(date '+%F %T') $*" >>"$STATE/session.log"; }
+log "session starting (prefix $PREFIX, port $PORT)"
+
+# A service or browser left over from an earlier session would hold the port or
+# the profile (Ubuntu keeps a logged-out user's processes): stop them first.
+pkill -u "$(id -u)" -f '^python3 [^ ]*/xlabtv/server\.py' 2>/dev/null && sleep 1
+pkill -u "$(id -u)" -f -- '--profile [^ ]*(xlab-tv-profile|xlab-tv/firefox-profile)' 2>/dev/null && sleep 1
+
 python3 "$PREFIX/xlabtv/server.py" --ui "$PREFIX/ui/dist" --port "$PORT" \
     --log "$STATE/apps.log" >>"$STATE/service.log" 2>&1 &
 SERVER=$!
 
 # wait up to 10 s for the service to answer
 i=0
-while ! python3 -c "import socket,sys; socket.create_connection(('127.0.0.1', $PORT), 0.5)" 2>/dev/null; do
+until kill -0 "$SERVER" 2>/dev/null &&
+      python3 -c "import socket; socket.create_connection(('127.0.0.1', $PORT), 0.5)" 2>/dev/null; do
     i=$((i + 1))
     if [ "$i" -ge 20 ] || ! kill -0 "$SERVER" 2>/dev/null; then
-        echo "xlab-tv: service did not start, see $STATE/service.log" >&2
+        log "service did not start; last lines of service.log:"
+        tail -n 5 "$STATE/service.log" >>"$STATE/session.log" 2>/dev/null
         exit 1
     fi
     sleep 0.5
 done
+log "service is up"
 
 URL="http://127.0.0.1:$PORT/"
 
@@ -59,6 +70,7 @@ start_browser() {
 LOOP=$!
 
 wait "$SERVER"
+log "service stopped (exit $?), ending session"
 pkill -P "$LOOP" 2>/dev/null
 kill "$LOOP" 2>/dev/null
 pkill -f -- "--profile $PROFILE" 2>/dev/null
