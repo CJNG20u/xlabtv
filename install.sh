@@ -26,7 +26,7 @@ sudo install -m 0644 session/user.js "$PREFIX/session/"
 if [ ! -f dist/index.html ]; then
     if command -v npm >/dev/null 2>&1; then
         echo "==> Building the UI"
-        npm install --no-audit --no-fund && npm run build
+        npm install --no-audit --no-fund --legacy-peer-deps && npm run build
     else
         echo "    (no npm: install nodejs + npm and re-run to build the UI; using the built-in page for now)"
     fi
