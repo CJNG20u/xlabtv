@@ -26,6 +26,7 @@ from urllib.parse import unquote, urlsplit
 
 import apps as apps_catalog  # noqa: E402  (xlabtv/apps.py, beside this file)
 import nuvio  # noqa: E402
+import youtube  # noqa: E402
 import remote as remote_mod  # noqa: E402
 
 MAX_BODY = 4096
@@ -117,40 +118,72 @@ def load_config(path: Path, detected: dict | None = None, catalog_rows: list | N
         first = next((r["apps"][0] for r in clean_rows if r["apps"]), None)
         hero = [first] if first else []
 
-    return {"apps": apps, "rows": clean_rows, "hero": hero, "power": bool(raw.get("power", True))}
+    yt = raw.get("youtube", {})
+    channels = yt.get("channels", []) if isinstance(yt, dict) else []
+    if not (isinstance(channels, list) and all(isinstance(c, str) for c in channels)):
+        raise ConfigError('"youtube": {"channels": [...]} must be a list of channel ids or @handles')
+    return {"apps": apps, "rows": clean_rows, "hero": hero, "power": bool(raw.get("power", True)),
+            "youtube_channels": channels, "continue_row": bool(raw.get("continue_row", False))}
 
 
 CONTINUE_ROW = "Continue watching"
 
 
-def add_continue_watching(config: dict, detected: dict, source) -> dict:
-    """Put Nuvio's in-progress titles first: a row of their own and the hero's first slide."""
-    nuvio_app = config["apps"].get("nuvio") or detected.get("nuvio")
-    if not nuvio_app or source is None:
-        return config
-    try:
-        items = source()
-    except Exception as exc:  # never let a format change upstream break the launcher
-        print(f"xlab-tv: could not read Nuvio's progress: {exc}", file=sys.stderr)
-        return config
-    ids = []
-    for item in items:
-        item_id = "cw-" + hashlib.sha1(f"{item['type']}:{item['metaId']}".encode()).hexdigest()[:12]
-        config["apps"][item_id] = {
-            "name": item["title"],
-            "subtitle": item["subtitle"],
-            "color": nuvio_app["color"],
-            "row": CONTINUE_ROW,
-            "command": [*nuvio_app["command"], nuvio.deep_link(item)],
-            "media": {},
-            "kind": "media",
-            "progress": item["progress"],
-            "art": {k: item[k] for k in ("backdrop", "poster", "thumbnail", "logo")},
-        }
-        ids.append(item_id)
-    if ids:
-        config["rows"] = [{"title": CONTINUE_ROW, "apps": ids}] + config["rows"]
-        config["hero"] = [ids[0]] + [h for h in config["hero"] if h != ids[0]]
+def _preview_id(prefix: str, key: str) -> str:
+    return prefix + hashlib.sha1(key.encode()).hexdigest()[:12]
+
+
+def add_previews(config: dict, detected: dict, continue_watching=None, youtube=None) -> dict:
+    """Give apps their own content for the hero (Google TV style): Nuvio's Continue watching,
+    the latest videos of your YouTube channels. Each preview is also a launchable entry."""
+    apps = config["apps"]
+
+    def attach(parent_id: str, entries: list[tuple[str, dict]]):
+        ids = []
+        for pid, entry in entries:
+            apps[pid] = entry
+            ids.append(pid)
+        if ids:
+            apps[parent_id] = {**apps[parent_id], "previews": ids}
+        return ids
+
+    nuvio_ids = []
+    nuvio_app = apps.get("nuvio")
+    if nuvio_app and continue_watching is not None:
+        try:
+            items = continue_watching()
+        except Exception as exc:  # never let a format change upstream break the launcher
+            print(f"xlab-tv: could not read Nuvio's progress: {exc}", file=sys.stderr)
+            items = []
+        nuvio_ids = attach("nuvio", [(
+            _preview_id("cw-", f"{i['type']}:{i['metaId']}"),
+            {"name": i["title"], "subtitle": i["subtitle"], "color": nuvio_app["color"],
+             "row": CONTINUE_ROW, "command": [*nuvio_app["command"], nuvio.deep_link(i)], "media": {},
+             "kind": "media", "progress": i["progress"], "eyebrow": "Continue watching in Nuvio",
+             "art": {k: i[k] for k in ("backdrop", "poster", "thumbnail", "logo")}},
+        ) for i in items])
+
+    yt_app = apps.get("youtube")
+    if yt_app and youtube is not None and config.get("youtube_channels"):
+        try:
+            videos = youtube(config["youtube_channels"])
+        except Exception as exc:
+            print(f"xlab-tv: could not read YouTube feeds: {exc}", file=sys.stderr)
+            videos = []
+        attach("youtube", [(
+            _preview_id("yt-", v["videoId"]),
+            {"name": v["title"], "subtitle": v["subtitle"], "color": yt_app["color"], "row": "YouTube",
+             "command": [*yt_app["command"], v["url"], "--fullscreen"], "media": {}, "kind": "media",
+             "eyebrow": "New on YouTube",
+             "art": {"backdrop": v["backdrop"], "thumbnail": v["backdrop"], "poster": "",
+                     "logo": "", "backdropFallback": v["backdropFallback"]}},
+        ) for v in videos])
+
+    if nuvio_ids:
+        if config.get("continue_row"):
+            config["rows"] = [{"title": CONTINUE_ROW, "apps": nuvio_ids}] + config["rows"]
+        # until an app is focused, the hero opens on what you were last watching
+        config["hero"] = [nuvio_ids[0]] + [h for h in config["hero"] if h != nuvio_ids[0]]
     return config
 
 
@@ -158,8 +191,9 @@ class Library:
     """The current app list: installed apps are looked up again at most every 30 s."""
 
     def __init__(self, path: Path, catalog: dict | None = None, detect=None, ttl: float = 30.0,
-                 continue_watching=None):
+                 continue_watching=None, youtube=None):
         self.path = path
+        self.youtube = youtube
         self.catalog = catalog
         self.continue_watching = continue_watching if continue_watching is not None else nuvio.continue_watching
         self.detect = detect or (lambda: apps_catalog.detect(self.catalog) if self.catalog else {})
@@ -180,8 +214,8 @@ class Library:
                 rows = self.catalog.get("rows") if self.catalog else None
                 try:
                     self.detected = self.detect()
-                    self._config = add_continue_watching(
-                        load_config(self.path, self.detected, rows), self.detected, self.continue_watching)
+                    self._config = add_previews(load_config(self.path, self.detected, rows), self.detected,
+                                                self.continue_watching, self.youtube)
                 except ConfigError as exc:
                     if self._config is None:
                         raise
@@ -215,7 +249,10 @@ def api_apps(config: dict) -> dict:
             "kind": a.get("kind", "app"),
         }
         if a.get("kind") == "media":
-            out.update(eyebrow="Continue watching in Nuvio", progress=a["progress"], logo=art(app_id, "logo"))
+            out.update(eyebrow=a.get("eyebrow", ""), logo=art(app_id, "logo"),
+                       backdropFallback=art(app_id, "backdropFallback"))
+            if "progress" in a:
+                out["progress"] = a["progress"]
         return out
 
     def item(app_id: str) -> dict:
@@ -229,8 +266,10 @@ def api_apps(config: dict) -> dict:
             "kind": a.get("kind", "app"),
         }
         if a.get("kind") == "media":
-            out.update(progress=a["progress"], backdrop=art(app_id, "thumbnail") or art(app_id, "backdrop"),
+            out.update(progress=a.get("progress", 0), backdrop=art(app_id, "thumbnail") or art(app_id, "backdrop"),
                        poster=art(app_id, "poster"))
+        if a.get("previews"):
+            out["previews"] = [hero(p) for p in a["previews"]]
         return out
 
     return {
@@ -509,7 +548,9 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     catalog = apps_catalog.load_catalog()
-    library = Library(args.config, catalog)
+    cache_root = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "xlab-tv"
+    feeds = youtube.YouTubeFeeds(cache_root)
+    library = Library(args.config, catalog, youtube=feeds.get)
     try:
         config = library.get()
     except ConfigError as exc:
@@ -531,7 +572,7 @@ def main(argv=None) -> int:
     def stop():
         httpd.shutdown()
 
-    cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "xlab-tv" / "icons"
+    cache = cache_root / "icons"
     store = apps_catalog.Store(catalog, cache, on_change=library.invalidate)
     remote = None
     if args.remote_port:

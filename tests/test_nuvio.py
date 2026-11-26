@@ -96,7 +96,7 @@ class ContinueWatchingTests(unittest.TestCase):
 
 
 class LauncherIntegrationTests(unittest.TestCase):
-    def test_row_hero_and_launch_command(self):
+    def test_previews_on_nuvio_hero_and_launch_command(self):
         detected = {"nuvio": {"name": "Nuvio", "subtitle": "", "color": "#7c3aed", "row": "Watch",
                               "command": ["flatpak", "run", "com.nuvio.media.desktop"], "media": {}}}
         items = [{"type": "movie", "metaId": "tt9", "title": "Dune", "subtitle": "40 min left", "progress": 0.5,
@@ -105,16 +105,21 @@ class LauncherIntegrationTests(unittest.TestCase):
             library = server.Library(Path(tmp) / "none.json", detect=lambda: detected,
                                      continue_watching=lambda: items)
             cfg = library.get()
-        first_row = cfg["rows"][0]
-        self.assertEqual(first_row["title"], "Continue watching")
-        cw_id = first_row["apps"][0]
-        self.assertEqual(cfg["hero"][0], cw_id)
-        self.assertEqual(cfg["apps"][cw_id]["command"][-1], "nuvio://meta?type=movie&id=tt9")
-        api = server.api_apps(cfg)
-        self.assertEqual(api["hero"][0]["backdrop"], "https://b")
-        self.assertEqual(api["hero"][0]["kind"], "media")
-        card = api["rows"][0]["items"][0]
-        self.assertEqual((card["kind"], card["progress"], card["backdrop"]), ("media", 0.5, "https://b"))
+            self.assertEqual([r["title"] for r in cfg["rows"]], ["Watch"])  # no separate row by default
+            cw_id = cfg["apps"]["nuvio"]["previews"][0]
+            self.assertEqual(cfg["hero"][0], cw_id)
+            self.assertEqual(cfg["apps"][cw_id]["command"][-1], "nuvio://meta?type=movie&id=tt9")
+            api = server.api_apps(cfg)
+            self.assertEqual(api["hero"][0]["backdrop"], "https://b")
+            self.assertEqual(api["hero"][0]["eyebrow"], "Continue watching in Nuvio")
+            nuvio_card = api["rows"][0]["items"][0]
+            self.assertEqual(nuvio_card["previews"][0]["id"], cw_id)
+            self.assertEqual(nuvio_card["previews"][0]["progress"], 0.5)
+
+            (Path(tmp) / "on.json").write_text('{"continue_row": true}')
+            cfg = server.Library(Path(tmp) / "on.json", detect=lambda: detected,
+                                 continue_watching=lambda: items).get()
+            self.assertEqual(cfg["rows"][0]["title"], "Continue watching")
 
     def test_without_nuvio_nothing_changes(self):
         with tempfile.TemporaryDirectory() as tmp:

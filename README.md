@@ -67,17 +67,26 @@ Optional keys per app: `icon` and `backdrop` (image paths). Check your edits wit
 Netflix, Prime Video and Disney+ open in Chrome (install with `xlab-tv-apps install netflix`);
 on Linux these services stream at lower resolution than on a TV or streaming stick.
 
-## Continue watching (Nuvio)
+## App previews in the hero (Nuvio, YouTube)
 
-When Nuvio is installed, xLab TV reads its watch progress (read-only, from
-`~/.config/nuviohtpc` or the Flatpak's `~/.var/app/com.nuvio.media.desktop/config/nuviohtpc`)
-and adds a **Continue watching** row, newest first, one card per show, plus the latest
-title as the hero's first slide. Selecting one opens it in Nuvio through its
-`nuvio://meta?type=…&id=…` link. The list refreshes at most every 30 s.
+Like Google TV, an app can bring its own content: focus its card and the hero shows it.
 
-In `/api/apps`, these items have `kind: "media"`, `progress` (0 to 1) and artwork URLs
-(`backdrop`, `poster` on cards; `backdrop`, `logo`, `eyebrow` on the hero); apps have
-`kind: "app"`.
+- **Nuvio:** your Continue watching, read (read-only) from Nuvio's watch progress in
+  `~/.config/nuviohtpc` or the Flatpak's `~/.var/app/com.nuvio.media.desktop/config/nuviohtpc`,
+  newest first, one per show. Opening one uses Nuvio's `nuvio://meta?type=…&id=…` link.
+  Until an app is focused, the hero starts on what you were last watching.
+  Set `"continue_row": true` in apps.json to also get a Continue watching row.
+- **YouTube:** the latest videos of channels you list in apps.json (YouTube's public channel
+  feeds, no account or API key; Shorts are skipped), refreshed every 30 minutes. Opening one
+  plays it in VacuumTube (`<url> --fullscreen`).
+
+```json
+{ "youtube": { "channels": ["@mkbhd", "@veritasium", "UCxxxxxxxxxxxxxxxxxxxxxx"] } }
+```
+
+In `/api/apps`, an app item with content has `previews`: a list of hero items
+(`id, title, subtitle, backdrop, backdropFallback, eyebrow, logo, progress?, kind: "media"`);
+launch one with `POST /api/launch {"id": <preview id>}`.
 
 ## Phone remote
 
