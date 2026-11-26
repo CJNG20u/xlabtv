@@ -1,0 +1,6 @@
+{
+  "name": "xLab TV",
+  "description": "A 10-foot cinematic home screen launcher for a Linux HTPC.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
