@@ -413,3 +413,38 @@ class LibraryRefreshTests(unittest.TestCase):
                 self.assertEqual(list(lib.get()["apps"]), ["b"])
             finally:
                 server.time.monotonic = real
+
+
+class PausePlayersTests(unittest.TestCase):
+    def test_pauses_video_players_not_music(self):
+        import subprocess
+        calls = []
+        names = ("(['org.freedesktop.DBus', ':1.42', 'org.mpris.MediaPlayer2.Nuvio', "
+                 "'org.mpris.MediaPlayer2.chromium.instance1234', 'org.mpris.MediaPlayer2.spotify', "
+                 "'org.gnome.Shell'],)\n")
+
+        def run(cmd, **kw):
+            calls.append(cmd)
+            if cmd[-1] == "org.freedesktop.DBus.ListNames":
+                return subprocess.CompletedProcess(cmd, 0, names, "")
+            return subprocess.CompletedProcess(cmd, 0, "()\n", "")
+        paused = server.pause_players(run)
+        self.assertEqual(paused, ["org.mpris.MediaPlayer2.Nuvio", "org.mpris.MediaPlayer2.chromium.instance1234"])
+        self.assertTrue(all(c[-1] == "org.mpris.MediaPlayer2.Player.Pause" for c in calls[1:]))
+
+    def test_no_session_bus(self):
+        def run(cmd, **kw):
+            raise FileNotFoundError("gdbus")
+        self.assertEqual(server.pause_players(run), [])
+
+    def test_launching_pauses_first(self):
+        order = []
+
+        class Lib:
+            def get(self):
+                return {"apps": {"a": {"name": "A", "command": [sys.executable, "-c", "pass"]}}}
+        launcher = server.Launcher(Lib(), pause=lambda: order.append("pause"))
+        launcher.launch("a")
+        self.assertEqual(order, ["pause"])
+        for p in launcher._procs.values():
+            p.wait()

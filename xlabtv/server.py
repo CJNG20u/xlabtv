@@ -387,6 +387,38 @@ def activate_pids(pids: list[int], run=subprocess.run) -> bool:
     return out.returncode == 0 and "true" in out.stdout
 
 
+# Music keeps playing when another app opens (like Google TV); video is paused.
+KEEP_PLAYING = ("spotify", "plexamp", "tidal", "shortwave", "ytmdesktop", "youtube-music")
+MPRIS = "org.mpris.MediaPlayer2."
+
+
+def pause_players(run=subprocess.run, keep=KEEP_PLAYING) -> list[str]:
+    """Send MPRIS Pause to every media player on the session bus except music players.
+    Returns the players asked to pause."""
+    try:
+        out = run(["gdbus", "call", "--session", "--dest", "org.freedesktop.DBus",
+                   "--object-path", "/org/freedesktop/DBus", "--method", "org.freedesktop.DBus.ListNames"],
+                  capture_output=True, text=True, timeout=3)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if out.returncode != 0:
+        return []
+    names = re.findall(r"'(org\.mpris\.MediaPlayer2\.[^']+)'", out.stdout)
+    paused = []
+    for name in names:
+        player = name[len(MPRIS):].lower()
+        if any(k in player for k in keep):
+            continue
+        try:
+            run(["gdbus", "call", "--session", "--dest", name, "--object-path", "/org/mpris/MediaPlayer2",
+                 "--method", "org.mpris.MediaPlayer2.Player.Pause"],
+                capture_output=True, text=True, timeout=2)
+            paused.append(name)
+        except (OSError, subprocess.SubprocessError):
+            continue
+    return paused
+
+
 OPENING_SECONDS = 8  # how long the UI may show "Opening…" after a launch
 
 
@@ -395,8 +427,11 @@ class Launcher:
     command again, which brings it forward for single-instance apps (Nuvio, browsers, most
     Flatpaks); previews (a Nuvio title, a YouTube video) go to their app the same way."""
 
-    def __init__(self, library, log_path: Path | None = None, clock=time.monotonic, activate=None):
+    def __init__(self, library, log_path: Path | None = None, clock=time.monotonic, activate=None,
+                 pause=None):
         self.library = library
+        # pauses whatever video is playing before another app comes forward
+        self.pause = pause
         self.log_path = log_path
         self.clock = clock
         # brings an open app's window forward; None = can't (no GNOME extension)
@@ -437,6 +472,8 @@ class Launcher:
         if app is None:
             raise KeyError(app_id)
         owner = app.get("parent", app_id)  # a preview belongs to its app
+        if self.pause is not None:
+            self.pause()  # one thing plays at a time: the app being left stops talking
         with self._lock:
             self._prune()
             running = self._procs.get(owner)
@@ -787,7 +824,7 @@ def main(argv=None) -> int:
 
     token = secrets.token_urlsafe(24)
     port_ref = [args.port]
-    launcher = Launcher(library, args.log, activate=activate_pids)
+    launcher = Launcher(library, args.log, activate=activate_pids, pause=pause_players)
     httpd: ThreadingHTTPServer
 
     def stop():
