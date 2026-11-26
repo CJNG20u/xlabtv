@@ -311,6 +311,9 @@ def make_remote_handler(pairing: Pairing, vinput: VirtualInput, library, launche
                     return self._send(404, b"not found", "text/plain")
                 ctype = "image/svg+xml" if str(icon).endswith(".svg") else "image/png"
                 return self._send(200, Path(icon).read_bytes(), ctype)
+            # The built-in page is always at /basic (simple, and first to get new buttons).
+            if path in ("/basic", "/basic/"):
+                return self._send(200, page.read_bytes(), "text/html; charset=utf-8")
             # The remote page: AI Studio's build (its /remote route) or the built-in page.
             if ui_dir is not None and (ui_dir / "index.html").is_file():
                 if path == "/":

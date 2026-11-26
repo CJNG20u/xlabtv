@@ -236,6 +236,9 @@ class RemoteServerTests(unittest.TestCase):
             conn.request("GET", "/remote")
             r = conn.getresponse(); body = r.read()
             self.assertIn(b'content=""', body)  # the UI's page, with no launcher token filled in
+            conn.request("GET", "/basic")
+            r = conn.getresponse(); body = r.read()
+            self.assertIn(b"xLab TV Remote", body)  # the built-in page, even with the UI built
             conn.close()
         finally:
             httpd.shutdown()

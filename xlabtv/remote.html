@@ -108,7 +108,7 @@ async function pair(code) {
   const r = await fetch('/remote/pair', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, name: navigator.userAgent.includes('Android') ? 'Android phone' : 'Phone' }) });
   const data = await r.json().catch(() => ({}));
-  if (data.ok) { token = data.token; localStorage.setItem('xlabRemoteToken', token); history.replaceState(null, '', '/remote'); show(); }
+  if (data.ok) { token = data.token; localStorage.setItem('xlabRemoteToken', token); history.replaceState(null, '', location.pathname); show(); }
   else say(data.error || 'Pairing failed');
 }
 $('pairBtn').onclick = () => pair($('code').value.trim());
