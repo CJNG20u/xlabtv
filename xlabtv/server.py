@@ -27,6 +27,7 @@ from urllib.parse import unquote, urlsplit
 import apps as apps_catalog  # noqa: E402  (xlabtv/apps.py, beside this file)
 import nuvio  # noqa: E402
 import youtube  # noqa: E402
+import settings as settings_mod  # noqa: E402
 import remote as remote_mod  # noqa: E402
 
 MAX_BODY = 4096
@@ -93,6 +94,9 @@ def load_config(path: Path, detected: dict | None = None, catalog_rows: list | N
             "media": media or base.get("media", {}),
         }
 
+    for app_id in hidden:
+        apps.pop(app_id, None)
+
     rows = raw.get("rows")
     clean_rows = []
     if rows:
@@ -110,6 +114,16 @@ def load_config(path: Path, detected: dict | None = None, catalog_rows: list | N
             if ids:
                 clean_rows.append({"title": title, "apps": ids})
 
+    order = raw.get("order", {})
+    if not isinstance(order, dict):
+        raise ConfigError('"order" must map row titles to lists of app ids')
+    for row in clean_rows:
+        wanted = order.get(row["title"])
+        if isinstance(wanted, list):
+            rank = {app_id: i for i, app_id in enumerate(wanted)}
+            original = {app_id: i for i, app_id in enumerate(row["apps"])}
+            row["apps"] = sorted(row["apps"], key=lambda a: rank.get(a, len(rank) + original[a]))
+
     hero = raw.get("hero")
     if hero is not None and not isinstance(hero, list):
         raise ConfigError('"hero" must be a list of app ids')
@@ -124,6 +138,59 @@ def load_config(path: Path, detected: dict | None = None, catalog_rows: list | N
         raise ConfigError('"youtube": {"channels": [...]} must be a list of channel ids or @handles')
     return {"apps": apps, "rows": clean_rows, "hero": hero, "power": bool(raw.get("power", True)),
             "youtube_channels": channels, "continue_row": bool(raw.get("continue_row", False))}
+
+
+def edit_user_config(path: Path, change) -> None:
+    """Apply change(raw_dict) to apps.json, keeping everything else, written atomically."""
+    raw = {}
+    if path.exists():
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ConfigError(f"cannot read {path}: {exc}") from exc
+    change(raw)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(raw, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def set_hidden(library, app_id: str, hidden: bool) -> None:
+    known = set(library.detected) | set(library.get()["apps"]) | set(_raw_hidden(library.path))
+    if app_id not in known:
+        raise KeyError(app_id)
+
+    def change(raw):
+        current = [h for h in raw.get("hidden", []) if h != app_id]
+        raw["hidden"] = current + [app_id] if hidden else current
+    edit_user_config(library.path, change)
+    library.invalidate()
+
+
+def _raw_hidden(path: Path) -> list:
+    try:
+        return list(json.loads(path.read_text(encoding="utf-8")).get("hidden", []))
+    except (OSError, ValueError, AttributeError):
+        return []
+
+
+def move_app(library, app_id: str, direction: str) -> None:
+    cfg = library.get()
+    row = next((r for r in cfg["rows"] if app_id in r["apps"]), None)
+    if row is None or cfg["apps"].get(app_id, {}).get("kind") == "media":
+        raise KeyError(app_id)
+    ids = list(row["apps"])
+    i = ids.index(app_id)
+    j = {"left": i - 1, "right": i + 1, "first": 0, "last": len(ids) - 1}.get(direction)
+    if j is None:
+        raise ValueError(direction)
+    j = max(0, min(len(ids) - 1, j))
+    ids.insert(j, ids.pop(i))
+
+    def change(raw):
+        raw.setdefault("order", {})[row["title"]] = ids
+    edit_user_config(library.path, change)
+    library.invalidate()
 
 
 CONTINUE_ROW = "Continue watching"
@@ -386,7 +453,8 @@ def show_launcher(run=subprocess.run) -> bool:
 
 
 def make_handler(library, launcher: Launcher, ui_dir: Path | None, token: str, port_ref: list,
-                 on_exit=None, run=subprocess.Popen, store=None, remote=None):
+                 on_exit=None, run=subprocess.Popen, store=None, remote=None, settings=None,
+                 updates=None):
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "xlab-tv"
@@ -433,6 +501,21 @@ def make_handler(library, launcher: Launcher, ui_dir: Path | None, token: str, p
                     return self._json(200, {"running": launcher.status(), "open": launcher.open_apps()})
                 if path == "/api/remote" and remote is not None:
                     return self._json(200, remote.info())
+                if path == "/api/updates" and updates is not None:
+                    return self._json(200, updates.get())
+                if path == "/api/apps/hidden":
+                    library.get()
+                    hidden = _raw_hidden(library.path)
+                    names = {**{k: v["name"] for k, v in library.detected.items()}}
+                    return self._json(200, {"apps": [{"id": h, "name": names.get(h, h)} for h in hidden]})
+                if path.startswith("/api/settings/") and settings is not None:
+                    getter = settings.get(path.rsplit("/", 1)[-1], (None, None))[0]
+                    if getter is None:
+                        return self._json(404, {"ok": False, "error": "not found"})
+                    try:
+                        return self._json(200, getter())
+                    except settings_mod.SettingsError as exc:
+                        return self._json(503, {"ok": False, "error": str(exc)})
                 if path == "/api/store" and store is not None:
                     library.get()
                     return self._json(200, {"items": store.items(library.detected)})
@@ -505,6 +588,35 @@ def make_handler(library, launcher: Launcher, ui_dir: Path | None, token: str, p
                 except RuntimeError as exc:
                     return self._json(409, {"ok": False, "error": str(exc)})
                 return self._json(200, {"ok": True})
+            if path in ("/api/apps/hide", "/api/apps/move"):
+                try:
+                    if path.endswith("hide"):
+                        set_hidden(library, str(body.get("id", "")), bool(body.get("hidden", True)))
+                    else:
+                        move_app(library, str(body.get("id", "")), str(body.get("direction", "")))
+                except KeyError:
+                    return self._json(404, {"ok": False, "error": "unknown app"})
+                except ValueError:
+                    return self._json(400, {"ok": False, "error": "direction must be left, right, first or last"})
+                except ConfigError as exc:
+                    return self._json(500, {"ok": False, "error": str(exc)})
+                return self._json(200, {"ok": True})
+            if path == "/api/settings/open" and settings is not None:
+                try:
+                    settings_mod.open_settings_page(str(body.get("page", "")))
+                except settings_mod.SettingsError as exc:
+                    return self._json(400, {"ok": False, "error": str(exc)})
+                return self._json(200, {"ok": True})
+            if path.startswith("/api/settings/") and settings is not None:
+                action = settings.get(path.rsplit("/", 1)[-1], (None, None))[1]
+                if action is None:
+                    return self._json(404, {"ok": False, "error": "not found"})
+                try:
+                    return self._json(200, {"ok": True, **action(body)})
+                except settings_mod.SettingsError as exc:
+                    return self._json(409, {"ok": False, "error": str(exc)})
+                except (TypeError, ValueError):
+                    return self._json(400, {"ok": False, "error": "bad value"})
             if path == "/api/close":
                 if not launcher.stop(str(body.get("id", ""))):
                     return self._json(404, {"ok": False, "error": "that app is not open"})
@@ -629,8 +741,14 @@ def main(argv=None) -> int:
     remote = None
     if args.remote_port:
         remote = start_remote(args.remote_port, library, launcher, ui_dir)
+    quick_settings = {
+        "wifi": (settings_mod.wifi_status, settings_mod.wifi_action),
+        "bluetooth": (settings_mod.bluetooth_status, settings_mod.bluetooth_action),
+        "audio": (settings_mod.audio_status, settings_mod.audio_action),
+    }
+    updates = settings_mod.UpdateChecker()
     handler = make_handler(library, launcher, ui_dir, token, port_ref, on_exit=stop, store=store,
-                           remote=remote)
+                           remote=remote, settings=quick_settings, updates=updates)
     try:
         httpd = ThreadingHTTPServer(("127.0.0.1", args.port), handler)
     except OSError as exc:

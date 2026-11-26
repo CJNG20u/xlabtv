@@ -16,7 +16,8 @@ fi
 
 echo "==> Installing packages"
 sudo apt-get update -qq
-sudo apt-get install -y python3 python3-gi gir1.2-gtk-4.0 gir1.2-webkit-6.0 flatpak python3-evdev
+sudo apt-get install -y python3 python3-gi gir1.2-gtk-4.0 gir1.2-webkit-6.0 flatpak python3-evdev \
+    network-manager bluez pulseaudio-utils
 
 echo "==> Copying xLab TV to $PREFIX"
 sudo mkdir -p "$PREFIX/xlabtv" "$PREFIX/session" "$PREFIX/ui"
@@ -55,6 +56,9 @@ sudo udevadm trigger --name-match=uinput
 if command -v ufw >/dev/null 2>&1 && sudo ufw status | grep -q "Status: active"; then
     sudo ufw allow 8766/tcp comment "xLab TV phone remote" >/dev/null
 fi
+
+# Where this checkout is, for the update check behind the gear's badge.
+pwd | sudo tee "$PREFIX/source-dir" >/dev/null
 
 # The "Updates" tile runs this; it knows where this checkout is.
 sed "s|@REPO@|$(pwd)|" session/xlab-tv-update | sudo tee /usr/local/bin/xlab-tv-update >/dev/null

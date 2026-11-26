@@ -158,6 +158,22 @@ The UI talks to the service through this API. Every `/api/*` call needs the head
 
 `exit` closes the launcher and leaves the Ubuntu desktop.
 
+App management and quick settings (same token):
+
+| Call | Body | Answer |
+|---|---|---|
+| `POST /api/apps/hide` | `{"id", "hidden": true\|false}` | `{ok}`; saved in apps.json `hidden` |
+| `GET /api/apps/hidden` | | `{apps: [{id, name}]}` |
+| `POST /api/apps/move` | `{"id", "direction": "left"\|"right"\|"first"\|"last"}` | `{ok}`; saved in apps.json `order` |
+| `GET /api/settings/wifi` | | `{enabled, ethernet, connected: {ssid, signal}\|null, networks: [{ssid, signal, secure, connected}]}` |
+| `POST /api/settings/wifi` | `{"action": "rescan"\|"connect"\|"disconnect"\|"power", ssid?, password?, on?}` | `{ok, ...status}` or 409 `{ok: false, error}` |
+| `GET /api/settings/bluetooth` | | `{available, powered, devices: [{mac, name, paired, connected}]}` |
+| `POST /api/settings/bluetooth` | `{"action": "scan"\|"pair"\|"connect"\|"disconnect"\|"remove"\|"power", mac?, on?}` | `{ok, ...status}` (scan takes ~8 s, pair up to ~30 s) |
+| `GET /api/settings/audio` | | `{outputs: [{id, name, default}], volume: 0-100, muted}` |
+| `POST /api/settings/audio` | `{"action": "output"\|"volume"\|"up"\|"down"\|"mute", id?, level?}` | `{ok, ...status}` |
+| `POST /api/settings/open` | `{"page": "display"\|"sound"\|"wifi"\|"bluetooth"\|"power"}` | opens that page of Ubuntu's Settings |
+| `GET /api/updates` | | `{xlabtv, apps, system, total, checked}`: what the Updates tile would install (checked 2 min after start, then every 6 h) |
+
 ## Develop
 
 ```sh

@@ -117,9 +117,23 @@ class ServerTests(unittest.TestCase):
 
             def forget(self):
                 test.forgot.append(True)
+        import settings as settings_mod
+
+        def wifi_get():
+            return {"enabled": True, "networks": []}
+
+        def wifi_post(body):
+            if body.get("action") == "connect":
+                raise settings_mod.SettingsError("Could not join Cafe: Secrets were required.")
+            return {"enabled": False}
+
+        class Updates:
+            def get(self):
+                return {"total": 4}
         handler = server.make_handler(self.library, self.launcher, ui, TOKEN, port_ref,
                                       run=lambda cmd, **kw: self.power_calls.append(cmd), store=self.store,
-                                      remote=FakeRemote())
+                                      remote=FakeRemote(), settings={"wifi": (wifi_get, wifi_post)},
+                                      updates=Updates())
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         port_ref[0] = self.port = self.httpd.server_address[1]
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
@@ -228,6 +242,32 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.request("GET", "/api/remote", token=None)[0], 401)
         self.assertEqual(self.request("POST", "/api/remote", {"action": "forget"})[0], 200)
         self.assertEqual(self.forgot, [True])
+
+    def test_settings_and_updates_endpoints(self):
+        self.assertEqual(json.loads(self.request("GET", "/api/settings/wifi")[1])["enabled"], True)
+        self.assertEqual(self.request("GET", "/api/settings/nope")[0], 404)
+        status, body = self.request("POST", "/api/settings/wifi", {"action": "power", "on": False})
+        self.assertEqual((status, json.loads(body)), (200, {"ok": True, "enabled": False}))
+        status, body = self.request("POST", "/api/settings/wifi", {"action": "connect", "ssid": "Cafe"})
+        self.assertEqual(status, 409)
+        self.assertIn("Secrets", json.loads(body)["error"])
+        self.assertEqual(json.loads(self.request("GET", "/api/updates")[1]), {"total": 4})
+        self.assertEqual(self.request("GET", "/api/settings/wifi", token=None)[0], 401)
+
+    def test_hide_and_move_apps(self):
+        cfg_path = self.library.path
+        self.assertEqual(self.request("POST", "/api/apps/move", {"id": "missing", "direction": "first"})[0], 200)
+        self.assertEqual(self.library.get()["rows"][0]["apps"], ["missing", "sleeper"])
+        self.assertEqual(json.loads(cfg_path.read_text())["order"], {"Apps": ["missing", "sleeper"]})
+        self.assertEqual(self.request("POST", "/api/apps/move", {"id": "sleeper", "direction": "up"})[0], 400)
+        self.assertEqual(self.request("POST", "/api/apps/hide", {"id": "sleeper", "hidden": True})[0], 200)
+        self.assertNotIn("sleeper", self.library.get()["apps"])
+        hidden = json.loads(self.request("GET", "/api/apps/hidden")[1])["apps"]
+        self.assertEqual([h["id"] for h in hidden], ["sleeper"])
+        self.request("POST", "/api/apps/hide", {"id": "sleeper", "hidden": False})
+        self.assertIn("sleeper", self.library.get()["apps"])
+        self.assertEqual(self.request("POST", "/api/apps/hide", {"id": "nope"})[0], 404)
+        self.assertIn("rows", json.loads(cfg_path.read_text()))  # the rest of apps.json is kept
 
     def test_close_endpoint(self):
         self.assertEqual(self.request("POST", "/api/close", {"id": "sleeper"})[0], 404)
