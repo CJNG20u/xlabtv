@@ -21,10 +21,16 @@ git clone https://github.com/CJNG20u/xlabtv.git && cd xlabtv
 
 ## Apps
 
-xLab TV finds installed TV apps by itself and puts them in rows (Watch, Music, Play):
-Nuvio, Stremio, Jellyfin, Plex, Kodi, YouTube (VacuumTube), FreeTube, Spotify, Steam
-(Big Picture), Moonlight, and Netflix, Prime Video and Disney+ in Chrome. Icons come
-from the installed apps.
+xLab TV finds installed TV apps by itself and puts them in rows, with their own icons.
+The Store's catalog (`xlabtv/catalog.json`, 40 TV-friendly apps):
+
+- **Watch:** Nuvio, Stremio, Jellyfin, Plex, Kodi, VLC, mpv, YouTube (VacuumTube), FreeTube;
+  in Chrome: Netflix, Prime Video, Disney+, HBO Max, Hulu, Paramount+, Apple TV+, Crunchyroll
+- **Live & Free:** Live TV (yuki-iptv: M3U / Xtream Codes, e.g. Dispatcharr); in Chrome: Pluto TV, Tubi, Twitch
+- **Music:** Spotify, Plexamp, TIDAL, YouTube Music, Radio (Shortwave)
+- **Play:** Steam (Big Picture), Moonlight, GeForce NOW, Xbox Cloud (Greenlight),
+  PS Remote Play (chiaki-ng), Heroic, Lutris, RetroArch, RetroDECK, Dolphin, PCSX2, PPSSPP
+- **Web:** Firefox, Chrome
 
 Install them from the **Store** on the TV, or from a terminal:
 
