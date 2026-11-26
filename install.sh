@@ -31,13 +31,12 @@ sudo install -m 0644 session/user.js "$PREFIX/session/"
 sudo install -Dm 0644 session/tv.xlab.Launcher.desktop /usr/share/applications/tv.xlab.Launcher.desktop
 sudo install -Dm 0644 session/tv.xlab.Launcher.svg /usr/share/icons/hicolor/scalable/apps/tv.xlab.Launcher.svg
 sudo gtk-update-icon-cache -q /usr/share/icons/hicolor 2>/dev/null || true
-if [ ! -f dist/index.html ]; then
-    if command -v npm >/dev/null 2>&1; then
-        echo "==> Building the UI"
-        npm install --no-audit --no-fund --legacy-peer-deps && npm run build
-    else
-        echo "    (no npm: install nodejs + npm and re-run to build the UI; using the built-in page for now)"
-    fi
+# Build the UI every time, so a git pull brings the latest screens.
+if command -v npm >/dev/null 2>&1; then
+    echo "==> Building the UI"
+    npm install --no-audit --no-fund --legacy-peer-deps && npm run build
+elif [ ! -f dist/index.html ]; then
+    echo "    (no npm: install nodejs + npm and re-run to build the UI; using the built-in page for now)"
 fi
 if [ -f dist/index.html ]; then
     sudo rm -rf "$PREFIX/ui/dist"
