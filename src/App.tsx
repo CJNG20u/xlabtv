@@ -59,6 +59,12 @@ interface TrackedStoreJob {
   message: string;
 }
 
+interface ActivePreviewSource {
+  appId: string;
+  rowIndex: number;
+  colIndex: number;
+}
+
 const DEFAULT_SETTINGS: LauncherSettings = {
   use24HourClock: true,
   autoAdvanceHero: true,
@@ -70,6 +76,8 @@ const SETTINGS_ITEM_COUNT = 9; // 0 Phone remote, 1..4 Power & Session actions, 
 const STATUS_POLL_INTERVAL_MS = 2000;
 const STORE_POLL_INTERVAL_MS = 2000;
 const APPS_IDLE_REFRESH_MS = 60_000;
+const PREVIEW_FOCUS_DEBOUNCE_MS = 400;
+const PREVIEW_AUTO_ADVANCE_MS = 8000;
 const POWER_ARM_TIMEOUT_MS = 5000;
 const TOAST_DURATION_MS = 4500;
 const LAUNCH_TIMEOUT_MS = 20000;
@@ -167,9 +175,15 @@ export default function App() {
   const [screensaverActive, setScreensaverActive] = useState<boolean>(false);
   const [toast, setToast] = useState<ToastMessage | null>(null);
 
+  // Google TV-style hero app previews (activated after ~400 ms of resting focus on an app with previews)
+  const [activePreviewSource, setActivePreviewSource] =
+    useState<ActivePreviewSource | null>(null);
+  const [previewHeroIndex, setPreviewHeroIndex] = useState<number>(0);
+
   const toastTimerRef = useRef<number | null>(null);
   const powerArmTimerRef = useRef<number | null>(null);
   const forgetArmTimerRef = useRef<number | null>(null);
+  const previewDebounceTimerRef = useRef<number | null>(null);
   const remoteFetchControllerRef = useRef<AbortController | null>(null);
   const launchTimeoutRef = useRef<number | null>(null);
   const idleTimerRef = useRef<number | null>(null);
@@ -257,6 +271,9 @@ export default function App() {
       }
       if (forgetArmTimerRef.current !== null) {
         window.clearTimeout(forgetArmTimerRef.current);
+      }
+      if (previewDebounceTimerRef.current !== null) {
+        window.clearTimeout(previewDebounceTimerRef.current);
       }
       if (remoteFetchControllerRef.current !== null) {
         remoteFetchControllerRef.current.abort();
@@ -858,6 +875,117 @@ export default function App() {
     return names;
   }, [appById]);
 
+  const appColorById = useMemo(() => {
+    const colors: Record<string, string> = {};
+    for (const [id, item] of Object.entries(appById)) {
+      colors[id] = item.color;
+    }
+    return colors;
+  }, [appById]);
+
+  // Resolve the currently active app preview source against live rows (stays fresh across 60 s refetches)
+  const activePreviewInfo = useMemo(() => {
+    if (!activePreviewSource) {
+      return null;
+    }
+    for (let r = 0; r < rows.length; r++) {
+      const c = rows[r].items.findIndex(
+        (item) => item.id === activePreviewSource.appId
+      );
+      if (c >= 0) {
+        const app = rows[r].items[c];
+        if (
+          app.kind !== 'media' &&
+          Array.isArray(app.previews) &&
+          app.previews.length > 0
+        ) {
+          return {
+            app,
+            previews: app.previews,
+            rowIndex: r,
+            colIndex: c,
+          };
+        }
+        return null;
+      }
+    }
+    return null;
+  }, [activePreviewSource, rows]);
+
+  // Debounce switching hero to an app's previews (~400 ms) so fast scrolling doesn't flicker
+  useEffect(() => {
+    if (previewDebounceTimerRef.current !== null) {
+      window.clearTimeout(previewDebounceTimerRef.current);
+      previewDebounceTimerRef.current = null;
+    }
+
+    if (focus.zone === 'hero' || focus.zone === 'topbar') {
+      return;
+    }
+
+    if (focus.zone === 'retry') {
+      setActivePreviewSource(null);
+      setPreviewHeroIndex(0);
+      return;
+    }
+
+    const card = rows[focus.rowIndex]?.items[focus.colIndex];
+    const hasPreviews = Boolean(
+      card &&
+        card.kind !== 'media' &&
+        Array.isArray(card.previews) &&
+        card.previews.length > 0
+    );
+
+    if (!hasPreviews || !card) {
+      setActivePreviewSource(null);
+      setPreviewHeroIndex(0);
+      return;
+    }
+
+    if (activePreviewSource?.appId === card.id) {
+      if (
+        activePreviewSource.rowIndex !== focus.rowIndex ||
+        activePreviewSource.colIndex !== focus.colIndex
+      ) {
+        setActivePreviewSource({
+          appId: card.id,
+          rowIndex: focus.rowIndex,
+          colIndex: focus.colIndex,
+        });
+      }
+      return;
+    }
+
+    const targetRow = focus.rowIndex;
+    const targetCol = focus.colIndex;
+    const targetId = card.id;
+
+    previewDebounceTimerRef.current = window.setTimeout(() => {
+      previewDebounceTimerRef.current = null;
+      setActivePreviewSource({
+        appId: targetId,
+        rowIndex: targetRow,
+        colIndex: targetCol,
+      });
+      setPreviewHeroIndex(0);
+    }, PREVIEW_FOCUS_DEBOUNCE_MS);
+
+    return () => {
+      if (previewDebounceTimerRef.current !== null) {
+        window.clearTimeout(previewDebounceTimerRef.current);
+        previewDebounceTimerRef.current = null;
+      }
+    };
+  }, [focus, rows, activePreviewSource]);
+
+  const displayedHeroItems = activePreviewInfo
+    ? activePreviewInfo.previews
+    : heroItems;
+  const displayedHeroIndex = activePreviewInfo
+    ? Math.min(previewHeroIndex, Math.max(0, activePreviewInfo.previews.length - 1))
+    : Math.min(heroIndex, Math.max(0, heroItems.length - 1));
+
   const resolveDisplayName = useCallback(
     (id: string) => {
       if (appNameById[id]) {
@@ -866,9 +994,20 @@ export default function App() {
       const heroMatch = heroItems.find(
         (item) => item.id === id || item.appId === id
       );
-      return heroMatch?.title ?? id;
+      if (heroMatch) {
+        return heroMatch.title;
+      }
+      for (const row of rows) {
+        for (const item of row.items) {
+          const previewMatch = item.previews?.find((p) => p.id === id);
+          if (previewMatch) {
+            return previewMatch.title;
+          }
+        }
+      }
+      return id;
     },
-    [appNameById, heroItems]
+    [appNameById, heroItems, rows]
   );
 
   const runningAppName = useMemo(() => {
@@ -881,14 +1020,22 @@ export default function App() {
     return '';
   }, [confirmedRunningId, pendingLaunch, resolveDisplayName]);
 
-  // Crossfade hero backdrop to match the focused row item when it has a backdrop
+  // Crossfade hero backdrop to match the focused row item when it has a backdrop (and no app previews)
   const focusedItemBackdrop = useMemo(() => {
-    if (focus.zone !== 'row') {
+    if (activePreviewInfo !== null || focus.zone !== 'row') {
       return null;
     }
     const item = rows[focus.rowIndex]?.items[focus.colIndex];
+    if (
+      item &&
+      item.kind !== 'media' &&
+      Array.isArray(item.previews) &&
+      item.previews.length > 0
+    ) {
+      return null;
+    }
     return item?.backdrop ?? null;
-  }, [focus, rows]);
+  }, [activePreviewInfo, focus, rows]);
 
   const handleFocusCard = useCallback((rowIndex: number, colIndex: number) => {
     setFocus({ zone: 'row', rowIndex, colIndex });
@@ -967,6 +1114,8 @@ export default function App() {
   );
 
   const handleResetFocus = useCallback(() => {
+    setActivePreviewSource(null);
+    setPreviewHeroIndex(0);
     if (showEmptyOrErrorScreen) {
       setFocus({ zone: 'retry' });
       return;
@@ -1452,7 +1601,7 @@ export default function App() {
             openSettings();
           }
         } else if (focus.zone === 'hero') {
-          const active = heroItems[heroIndex];
+          const active = displayedHeroItems[displayedHeroIndex];
           if (active) {
             handleOpenHero(active);
           }
@@ -1472,7 +1621,7 @@ export default function App() {
         } else if (action === 'right') {
           handleFocusTopBar('settings');
         } else if (action === 'down') {
-          if (heroItems.length > 0) {
+          if (displayedHeroItems.length > 0) {
             setFocus({ zone: 'hero' });
           } else if (rows.length > 0) {
             handleFocusCard(0, rowMemory[0] ?? 0);
@@ -1486,18 +1635,39 @@ export default function App() {
           handleFocusTopBar(lastTopBarButtonRef.current);
           window.scrollTo({ top: 0, behavior: 'smooth' });
         } else if (action === 'down' && rows.length > 0) {
-          const savedCol = rowMemory[0] ?? 0;
-          const clampedCol = Math.min(
-            savedCol,
-            Math.max(0, rows[0].items.length - 1)
-          );
-          handleFocusCard(0, clampedCol);
-        } else if (action === 'left' && heroItems.length > 1) {
-          setHeroIndex(
-            (prev) => (prev - 1 + heroItems.length) % heroItems.length
-          );
-        } else if (action === 'right' && heroItems.length > 1) {
-          setHeroIndex((prev) => (prev + 1) % heroItems.length);
+          if (activePreviewInfo) {
+            handleFocusCard(
+              activePreviewInfo.rowIndex,
+              activePreviewInfo.colIndex
+            );
+          } else {
+            const savedCol = rowMemory[0] ?? 0;
+            const clampedCol = Math.min(
+              savedCol,
+              Math.max(0, rows[0].items.length - 1)
+            );
+            handleFocusCard(0, clampedCol);
+          }
+        } else if (action === 'left' && displayedHeroItems.length > 1) {
+          if (activePreviewInfo) {
+            setPreviewHeroIndex(
+              (prev) =>
+                (prev - 1 + displayedHeroItems.length) %
+                displayedHeroItems.length
+            );
+          } else {
+            setHeroIndex(
+              (prev) => (prev - 1 + heroItems.length) % heroItems.length
+            );
+          }
+        } else if (action === 'right' && displayedHeroItems.length > 1) {
+          if (activePreviewInfo) {
+            setPreviewHeroIndex(
+              (prev) => (prev + 1) % displayedHeroItems.length
+            );
+          } else {
+            setHeroIndex((prev) => (prev + 1) % heroItems.length);
+          }
         }
         return;
       }
@@ -1521,7 +1691,19 @@ export default function App() {
         const nextCol = Math.min(currentRow.items.length - 1, focus.colIndex + 1);
         handleFocusCard(focus.rowIndex, nextCol);
       } else if (action === 'up') {
-        if (focus.rowIndex === 0) {
+        // When an app card's previews are currently shown in the hero, Up jumps straight to its hero button
+        if (
+          activePreviewInfo &&
+          activePreviewInfo.rowIndex === focus.rowIndex &&
+          activePreviewInfo.colIndex === focus.colIndex
+        ) {
+          setFocus({ zone: 'hero' });
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        } else if (focus.rowIndex === 0) {
+          if (activePreviewInfo) {
+            setActivePreviewSource(null);
+            setPreviewHeroIndex(0);
+          }
           if (heroItems.length > 0) {
             setFocus({ zone: 'hero' });
           } else {
@@ -1568,6 +1750,9 @@ export default function App() {
       focus,
       heroIndex,
       heroItems,
+      displayedHeroItems,
+      displayedHeroIndex,
+      activePreviewInfo,
       rows,
       rowMemory,
       openSettings,
@@ -1648,30 +1833,40 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [screensaverActive, wakeScreensaver, resetIdleTimer, handleSpatialAction]);
 
-  // Gentle hero auto-advance when idle and no overlay/screensaver/Store/card override is active
+  // Hero auto-advance (8 s for active app previews; 8.5 s for default hero when no static backdrop override)
   useEffect(() => {
+    const isPreviewMode = activePreviewInfo !== null;
     if (
       !settings.autoAdvanceHero ||
-      heroItems.length <= 1 ||
+      displayedHeroItems.length <= 1 ||
       settingsOpen ||
       phoneRemoteOpen ||
       storeOpen ||
       activeOverlayId !== null ||
       screensaverActive ||
       showEmptyOrErrorScreen ||
-      focusedItemBackdrop !== null
+      (!isPreviewMode && focusedItemBackdrop !== null)
     ) {
       return;
     }
 
+    const slideCount = displayedHeroItems.length;
+    const delayMs = isPreviewMode ? PREVIEW_AUTO_ADVANCE_MS : 8500;
+
     const timer = window.setInterval(() => {
-      setHeroIndex((prev) => (prev + 1) % heroItems.length);
-    }, 8500);
+      if (isPreviewMode) {
+        setPreviewHeroIndex((prev) => (prev + 1) % slideCount);
+      } else {
+        setHeroIndex((prev) => (prev + 1) % slideCount);
+      }
+    }, delayMs);
 
     return () => window.clearInterval(timer);
   }, [
     settings.autoAdvanceHero,
-    heroItems.length,
+    activePreviewInfo,
+    displayedHeroItems.length,
+    displayedHeroIndex,
     settingsOpen,
     phoneRemoteOpen,
     storeOpen,
@@ -1679,7 +1874,6 @@ export default function App() {
     screensaverActive,
     showEmptyOrErrorScreen,
     focusedItemBackdrop,
-    heroIndex,
   ]);
 
   const screensaverBackdrops = heroItems.length > 0 ? heroItems : mockData.hero;
@@ -1726,17 +1920,29 @@ export default function App() {
       ) : (
         <main className="pb-16">
           <HeroBanner
-            items={heroItems}
-            activeIndex={heroIndex}
+            items={displayedHeroItems}
+            activeIndex={displayedHeroIndex}
             isHeroFocused={homeInteractive && focus.zone === 'hero'}
             overrideBackdrop={focusedItemBackdrop}
             appNameById={appNameById}
+            appColorById={appColorById}
+            fallbackAppColor={activePreviewInfo?.app.color}
             onFocusHero={() => setFocus({ zone: 'hero' })}
             onOpenHero={handleOpenHero}
           />
 
+          {/* Quiet source caption under the hero while an app with previews is active */}
+          <div
+            aria-live="polite"
+            className={`px-16 pt-2 text-[1.05rem] leading-tight font-medium text-[#94A3B8] transition-opacity duration-200 ${
+              activePreviewInfo ? 'opacity-100' : 'opacity-0'
+            }`}
+          >
+            {activePreviewInfo ? `From ${activePreviewInfo.app.name}` : '\u00A0'}
+          </div>
+
           {/* Horizontal Content & App Rows */}
-          <div className="relative z-20 mt-4 space-y-6">
+          <div className="relative z-20 mt-2 space-y-6">
             {rows.map((row, rowIndex) => (
               <ContentRow
                 key={row.title}

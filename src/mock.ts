@@ -22,6 +22,7 @@ export interface HeroItem {
   title: string;
   subtitle: string;
   backdrop: string;
+  backdropFallback?: string;
   appId: string;
   eyebrow?: string;
   progress?: number;
@@ -38,6 +39,7 @@ export interface RowItem {
   backdrop?: string;
   poster?: string;
   progress?: number;
+  previews?: HeroItem[];
 }
 
 export interface ContentRow {
@@ -61,7 +63,7 @@ export const mockData: MockData = {
       backdrop: heroNordicFjord,
       logo: northernPassageLogo,
       progress: 0.64,
-      appId: 'jellyfin',
+      appId: 'nuvio',
     },
     {
       id: 'cw-orbital-horizon-s1e2',
@@ -72,7 +74,7 @@ export const mockData: MockData = {
       backdrop: heroOrbitalHorizon,
       logo: '',
       progress: 0.42,
-      appId: 'kodi',
+      appId: 'nuvio',
     },
     {
       id: 'hero-alpine-pass',
@@ -122,6 +124,94 @@ export const mockData: MockData = {
     {
       title: 'Apps',
       items: [
+        {
+          id: 'nuvio',
+          kind: 'app',
+          name: 'Nuvio',
+          subtitle: 'Movies & Series',
+          icon: '',
+          color: '#7C3AED',
+          previews: [
+            {
+              id: 'preview-nuvio-northern',
+              appId: 'nuvio',
+              kind: 'media',
+              eyebrow: 'Continue watching in Nuvio',
+              title: 'Northern Passage',
+              subtitle: '4K HDR · 38 min left',
+              backdrop: heroNordicFjord,
+              backdropFallback: heroNordicFjord,
+              logo: northernPassageLogo,
+              progress: 0.64,
+            },
+            {
+              id: 'preview-nuvio-orbital',
+              appId: 'nuvio',
+              kind: 'media',
+              eyebrow: 'Continue watching in Nuvio',
+              title: 'Orbital Horizon',
+              subtitle: 'S1:E2 · Pilot · 30 min left',
+              backdrop: heroOrbitalHorizon,
+              backdropFallback: heroOrbitalHorizon,
+              logo: '',
+              progress: 0.42,
+            },
+            {
+              id: 'preview-nuvio-alpine',
+              appId: 'nuvio',
+              kind: 'media',
+              eyebrow: 'Trending on Nuvio',
+              title: 'Alpine Pass',
+              subtitle: '2026 · Adventure · 2h 04m',
+              backdrop: heroAlpineRally,
+              backdropFallback: heroAlpineRally,
+              logo: '',
+            },
+          ],
+        },
+        {
+          id: 'youtube',
+          kind: 'app',
+          name: 'YouTube',
+          subtitle: 'Videos & Channels',
+          icon: '',
+          color: '#DC2626',
+          previews: [
+            {
+              id: 'preview-yt-hifi',
+              appId: 'youtube',
+              kind: 'media',
+              eyebrow: 'Recommended on YouTube',
+              title: 'Building a Silent 4K Living Room HTPC',
+              subtitle: 'Audio & Hardware · 18 min',
+              backdrop: heroHifiStudio,
+              backdropFallback: heroHifiStudio,
+              logo: '',
+            },
+            {
+              id: 'preview-yt-rally',
+              appId: 'youtube',
+              kind: 'media',
+              eyebrow: 'Subscriptions · YouTube',
+              title: 'Alpine Rally Onboard in 4K 60fps',
+              subtitle: 'Motorsport Vault · 12 min',
+              backdrop: heroAlpineRally,
+              backdropFallback: heroAlpineRally,
+              logo: '',
+            },
+            {
+              id: 'preview-yt-fjord',
+              appId: 'youtube',
+              kind: 'media',
+              eyebrow: '4K Nature · YouTube',
+              title: 'Crossing the Arctic Fjord at Dawn',
+              subtitle: 'Nordic Cinema · 24 min',
+              backdrop: heroNordicFjord,
+              backdropFallback: heroNordicFjord,
+              logo: '',
+            },
+          ],
+        },
         {
           id: 'jellyfin',
           kind: 'app',

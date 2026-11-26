@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Play } from 'lucide-react';
 import type { HeroItem } from '../mock';
+import { buildCardGradient } from '../utils/color';
 
 interface HeroBannerProps {
   items: HeroItem[];
@@ -8,6 +9,8 @@ interface HeroBannerProps {
   isHeroFocused: boolean;
   overrideBackdrop?: string | null;
   appNameById: Record<string, string>;
+  appColorById: Record<string, string>;
+  fallbackAppColor?: string;
   onFocusHero: () => void;
   onOpenHero: (item: HeroItem) => void;
 }
@@ -17,6 +20,21 @@ function clampProgress(value: number | undefined): number | null {
     return null;
   }
   return Math.min(1, Math.max(0, value));
+}
+
+function resolveItemBackdropUrl(
+  item: HeroItem,
+  failedUrls: Record<string, boolean>
+): string | null {
+  const primary = item.backdrop?.trim() ?? '';
+  if (primary && !failedUrls[primary]) {
+    return primary;
+  }
+  const fallback = item.backdropFallback?.trim() ?? '';
+  if (fallback && !failedUrls[fallback]) {
+    return fallback;
+  }
+  return null;
 }
 
 function HeroBackdropImage({
@@ -65,29 +83,39 @@ export function HeroBanner({
   isHeroFocused,
   overrideBackdrop,
   appNameById,
+  appColorById,
+  fallbackAppColor,
   onFocusHero,
   onOpenHero,
 }: HeroBannerProps) {
   const [failedUrls, setFailedUrls] = useState<Record<string, boolean>>({});
   const [loadedLogos, setLoadedLogos] = useState<Record<string, boolean>>({});
   const [failedLogos, setFailedLogos] = useState<Record<string, boolean>>({});
-  const [previousOverride, setPreviousOverride] = useState<string | null>(null);
+  const [previousBackdrop, setPreviousBackdrop] = useState<string | null>(null);
 
-  const prevOverrideRef = useRef<string | null>(null);
+  const prevBackdropRef = useRef<string | null>(null);
   const logoImgRef = useRef<HTMLImageElement | null>(null);
 
   const activeItem = items[activeIndex] ?? items[0];
   const logoUrl =
     activeItem?.kind === 'media' ? activeItem.logo?.trim() ?? '' : '';
 
-  // Keep previous override backdrop mounted briefly so crossfading between row items stays smooth
+  const overrideUrl = overrideBackdrop?.trim() ?? '';
+  const activeOverrideUrl =
+    overrideUrl && !failedUrls[overrideUrl] ? overrideUrl : null;
+  const activeSlideBackdropUrl = activeItem
+    ? resolveItemBackdropUrl(activeItem, failedUrls)
+    : null;
+  const activeBackdropUrl = activeOverrideUrl ?? activeSlideBackdropUrl;
+
+  // Keep the previously displayed backdrop mounted so crossfading between default hero and previews stays smooth
   useEffect(() => {
-    const next = overrideBackdrop?.trim() || null;
-    if (prevOverrideRef.current !== next) {
-      setPreviousOverride(prevOverrideRef.current);
-      prevOverrideRef.current = next;
+    const next = activeBackdropUrl || null;
+    if (prevBackdropRef.current !== next) {
+      setPreviousBackdrop(prevBackdropRef.current);
+      prevBackdropRef.current = next;
     }
-  }, [overrideBackdrop]);
+  }, [activeBackdropUrl]);
 
   // Handle cached hero logo images immediately on mount/slide change
   useEffect(() => {
@@ -96,44 +124,68 @@ export function HeroBanner({
     }
     const img = logoImgRef.current;
     if (img && img.complete && img.naturalWidth > 0) {
-      setLoadedLogos((prev) => (prev[logoUrl] ? prev : { ...prev, [logoUrl]: true }));
+      setLoadedLogos((prev) =>
+        prev[logoUrl] ? prev : { ...prev, [logoUrl]: true }
+      );
     }
   }, [logoUrl]);
 
-  // Mount hero backdrops + active/previous override only (avoids eagerly fetching remote row URLs)
+  // Mount active slide URLs + previous backdrop for zero-flicker GPU crossfades
   const mountedBackdrops = useMemo(() => {
     const unique = new Set<string>();
     for (const item of items) {
-      if (item.backdrop) unique.add(item.backdrop);
+      const resolved = resolveItemBackdropUrl(item, failedUrls);
+      if (resolved) unique.add(resolved);
     }
-    if (previousOverride) unique.add(previousOverride);
-    if (overrideBackdrop) unique.add(overrideBackdrop);
+    if (previousBackdrop && !failedUrls[previousBackdrop]) {
+      unique.add(previousBackdrop);
+    }
+    if (activeOverrideUrl) {
+      unique.add(activeOverrideUrl);
+    }
     return Array.from(unique);
-  }, [items, previousOverride, overrideBackdrop]);
+  }, [items, failedUrls, previousBackdrop, activeOverrideUrl]);
 
   if (!activeItem) {
     return null;
   }
 
-  const activeBackdropUrl = overrideBackdrop || activeItem.backdrop;
   const resolvedAppName = appNameById[activeItem.appId] ?? activeItem.appId;
+  const resolvedAppColor =
+    fallbackAppColor || appColorById[activeItem.appId] || '';
   const isMediaHero = activeItem.kind === 'media';
   const eyebrowText =
     activeItem.eyebrow?.trim() ||
     (!isMediaHero && resolvedAppName ? `Featured in ${resolvedAppName}` : '');
   const progress = isMediaHero ? clampProgress(activeItem.progress) : null;
+  const buttonLabel = isMediaHero
+    ? progress !== null
+      ? 'Resume'
+      : 'Play'
+    : 'Open';
   const canTryLogo = Boolean(logoUrl) && !failedLogos[logoUrl];
   const isLogoLoaded = canTryLogo && Boolean(loadedLogos[logoUrl]);
+
+  // Final fallback background: app colour gradient if both backdrop and backdropFallback fail/are empty
+  const fallbackSurface = resolvedAppColor
+    ? buildCardGradient(resolvedAppColor)
+    : 'linear-gradient(135deg, #1E293B 0%, #0F172A 55%, #090B10 100%)';
 
   return (
     <section
       aria-label="Featured showcase"
       className="relative h-[55vh] min-h-[34rem] w-full overflow-hidden bg-[#090B10]"
     >
+      {/* Base colour layer shown while remote images load or if both backdrop & fallback fail */}
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 z-0"
+        style={{ background: fallbackSurface }}
+      />
+
       {/* Full-bleed backdrop layers crossfading via opacity + transform only */}
       {mountedBackdrops.map((url) => {
         const isActive = url === activeBackdropUrl;
-        const hasFailed = Boolean(failedUrls[url]);
 
         return (
           <div
@@ -144,21 +196,17 @@ export function HeroBanner({
                 ? 'z-0 opacity-100 scale-100'
                 : 'z-0 pointer-events-none opacity-0 scale-[1.03]'
             }`}
-            style={{
-              background:
-                'linear-gradient(135deg, #1E293B 0%, #0F172A 55%, #090B10 100%)',
-            }}
           >
-            {!hasFailed && (
-              <HeroBackdropImage
-                src={url}
-                alt={isActive ? activeItem.title : ''}
-                isActive={isActive}
-                onError={() =>
-                  setFailedUrls((prev) => ({ ...prev, [url]: true }))
-                }
-              />
-            )}
+            <HeroBackdropImage
+              src={url}
+              alt={isActive ? activeItem.title : ''}
+              isActive={isActive}
+              onError={() =>
+                setFailedUrls((prev) =>
+                  prev[url] ? prev : { ...prev, [url]: true }
+                )
+              }
+            />
           </div>
         );
       })}
@@ -235,7 +283,7 @@ export function HeroBanner({
               </p>
             )}
 
-            {/* Watch progress bar under subtitle for media hero items */}
+            {/* Watch progress bar under subtitle only when progress is present */}
             {progress !== null && (
               <div
                 role="progressbar"
@@ -267,7 +315,7 @@ export function HeroBanner({
                 }`}
               >
                 <Play className="h-[1.35rem] w-[1.35rem] fill-current" />
-                <span>{isMediaHero ? 'Resume' : 'Open'}</span>
+                <span>{buttonLabel}</span>
                 <span
                   aria-hidden="true"
                   className={`tv-focus-ring pointer-events-none absolute -inset-[5px] rounded-[1rem] border-[3px] border-[#38BDF8] ${
