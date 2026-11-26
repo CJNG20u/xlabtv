@@ -9,6 +9,20 @@ export default defineConfig(() => {
     plugins: [
       react(),
       tailwindcss(),
+      {
+        // Sample artwork in src/assets/images and src/assets/logos is only used by the
+        // development sample data (src/mock.ts): production builds get empty strings
+        // instead, so those files never ship to the TV.
+        name: 'drop-sample-artwork',
+        apply: 'build',
+        enforce: 'pre',
+        load(id: string) {
+          if (/[\\/]src[\\/]assets[\\/](images|logos)[\\/]/.test(id.split('?')[0])) {
+            return 'export default ""';
+          }
+          return null;
+        },
+      },
     ],
     build: {
       outDir: 'dist',
