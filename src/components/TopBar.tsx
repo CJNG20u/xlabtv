@@ -6,6 +6,7 @@ export type TopBarButton = 'store' | 'settings';
 interface TopBarProps {
   use24HourClock: boolean;
   focusedButton: TopBarButton | null;
+  updateCount?: number;
   onFocusStore: () => void;
   onOpenStore: () => void;
   onFocusSettings: () => void;
@@ -34,6 +35,7 @@ function getGreeting(date: Date): string {
 export function TopBar({
   use24HourClock,
   focusedButton,
+  updateCount = 0,
   onFocusStore,
   onOpenStore,
   onFocusSettings,
@@ -160,13 +162,25 @@ export function TopBar({
           onClick={onOpenSettings}
           onMouseEnter={onFocusSettings}
           onFocus={onFocusSettings}
-          aria-label="Open settings"
+          aria-label={
+            updateCount > 0
+              ? `Open settings (${updateCount} ${updateCount === 1 ? 'update' : 'updates'} available)`
+              : 'Open settings'
+          }
           aria-current={isSettingsFocused ? 'true' : undefined}
           className={`tv-card relative flex h-[3.25rem] w-[3.25rem] items-center justify-center rounded-full border border-white/15 bg-[#151A24] text-[#E2E8F0] focus:outline-none ${
             isSettingsFocused ? 'tv-btn-focused text-white' : ''
           }`}
         >
           <Settings className="h-[1.5rem] w-[1.5rem]" strokeWidth={2} />
+          {updateCount > 0 && (
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute -top-1.5 -right-1.5 z-10 flex h-[1.55rem] min-w-[1.55rem] items-center justify-center rounded-full border-2 border-[#090B10] bg-[#38BDF8] px-1 text-[0.8125rem] leading-none font-bold text-[#06080D] tabular-nums"
+            >
+              {updateCount > 99 ? '99+' : updateCount}
+            </span>
+          )}
           <span
             aria-hidden="true"
             className={`tv-focus-ring pointer-events-none absolute -inset-[3px] rounded-full border-[3px] border-[#38BDF8] ${

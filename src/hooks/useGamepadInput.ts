@@ -7,13 +7,15 @@ export type SpatialAction =
   | 'right'
   | 'activate'
   | 'back'
-  | 'settings';
+  | 'settings'
+  | 'menu';
 
 type DirectionAction = 'up' | 'down' | 'left' | 'right';
 
 const STICK_DEADZONE = 0.45;
 const REPEAT_INITIAL_DELAY_MS = 350;
 const REPEAT_INTERVAL_MS = 130;
+const LONG_PRESS_ACTIVATE_MS = 600;
 
 // W3C Standard Gamepad button indices
 const BTN_A = 0;
@@ -29,6 +31,7 @@ interface GamepadInputOptions {
   onActivity?: () => void;
   isScreensaverActive?: boolean;
   onWakeScreensaver?: () => void;
+  enableLongPressActivate?: boolean;
 }
 
 function isPressed(button?: GamepadButton): boolean {
@@ -117,6 +120,16 @@ export function useGamepadInput(options: GamepadInputOptions) {
     let prevAnyInput = false;
     let suppressUntilNeutral = false;
 
+    let aPressStartAt: number | null = null;
+    let aTrackingLongPress = false;
+    let aLongPressFired = false;
+
+    const resetALongPress = () => {
+      aPressStartAt = null;
+      aTrackingLongPress = false;
+      aLongPressFired = false;
+    };
+
     const tick = (now: number) => {
       const pads = navigator.getGamepads();
       let anyConnected = false;
@@ -152,15 +165,22 @@ export function useGamepadInput(options: GamepadInputOptions) {
         prevStart = false;
         prevAnyInput = false;
         suppressUntilNeutral = false;
+        resetALongPress();
         rafId = null;
         return;
       }
 
-      const { onAction, onActivity, isScreensaverActive, onWakeScreensaver } =
-        optionsRef.current;
+      const {
+        onAction,
+        onActivity,
+        isScreensaverActive,
+        onWakeScreensaver,
+        enableLongPressActivate,
+      } = optionsRef.current;
 
       // Wake ambient screensaver on any new gamepad button/stick input without firing an action
       if (isScreensaverActive) {
+        resetALongPress();
         if (anyInputDown && !prevAnyInput) {
           suppressUntilNeutral = true;
           heldDirection = activeDirection;
@@ -184,6 +204,7 @@ export function useGamepadInput(options: GamepadInputOptions) {
 
       // Wait until the wake button/stick is released before accepting navigation/action
       if (suppressUntilNeutral) {
+        resetALongPress();
         if (!anyInputDown) {
           suppressUntilNeutral = false;
           heldDirection = null;
@@ -201,11 +222,36 @@ export function useGamepadInput(options: GamepadInputOptions) {
       }
       prevAnyInput = anyInputDown;
 
-      // Edge-triggered action buttons
+      // Button A: supports 600ms long-press -> 'menu' on home row cards, immediate 'activate' elsewhere
       if (aDown && !prevA) {
         onActivity?.();
-        onAction('activate');
+        if (enableLongPressActivate) {
+          aPressStartAt = now;
+          aTrackingLongPress = true;
+          aLongPressFired = false;
+        } else {
+          resetALongPress();
+          onAction('activate');
+        }
+      } else if (
+        aDown &&
+        aTrackingLongPress &&
+        !aLongPressFired &&
+        aPressStartAt !== null
+      ) {
+        if (now - aPressStartAt >= LONG_PRESS_ACTIVATE_MS) {
+          aLongPressFired = true;
+          onActivity?.();
+          onAction('menu');
+        }
+      } else if (!aDown && prevA) {
+        if (aTrackingLongPress && !aLongPressFired) {
+          onActivity?.();
+          onAction('activate');
+        }
+        resetALongPress();
       }
+
       if (bDown && !prevB) {
         onActivity?.();
         onAction('back');
@@ -253,6 +299,7 @@ export function useGamepadInput(options: GamepadInputOptions) {
         prevStart = false;
         prevAnyInput = false;
         suppressUntilNeutral = false;
+        resetALongPress();
       }
     };
 

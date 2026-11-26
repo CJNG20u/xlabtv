@@ -8,8 +8,10 @@ interface ContentRowProps {
   isRowFocused: boolean;
   focusedColIndex: number;
   showSubtitles: boolean;
+  openAppIds?: ReadonlySet<string>;
   onFocusCard: (rowIndex: number, colIndex: number) => void;
   onOpenCard: (item: RowItem, rowTitle: string) => void;
+  onOpenCardMenu?: (item: RowItem, rowIndex: number, colIndex: number) => void;
 }
 
 interface MediaBackdropImageProps {
@@ -66,8 +68,10 @@ export function ContentRow({
   isRowFocused,
   focusedColIndex,
   showSubtitles,
+  openAppIds,
   onFocusCard,
   onOpenCard,
+  onOpenCardMenu,
 }: ContentRowProps) {
   const sectionRef = useRef<HTMLElement | null>(null);
   const [scrollIndex, setScrollIndex] = useState(0);
@@ -169,6 +173,11 @@ export function ContentRow({
                     onFocusCard(rowIndex, colIndex);
                     onOpenCard(item, row.title);
                   }}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    onFocusCard(rowIndex, colIndex);
+                    onOpenCardMenu?.(item, rowIndex, colIndex);
+                  }}
                   onMouseEnter={() => onFocusCard(rowIndex, colIndex)}
                   onFocus={() => onFocusCard(rowIndex, colIndex)}
                   className={`group w-[19.25rem] shrink-0 text-left focus:outline-none ${
@@ -257,6 +266,7 @@ export function ContentRow({
             }
 
             const hasIconImage = Boolean(item.icon) && !failedIcons[item.id];
+            const isAppOpen = Boolean(openAppIds?.has(item.id));
 
             return (
               <button
@@ -266,6 +276,11 @@ export function ContentRow({
                 onClick={() => {
                   onFocusCard(rowIndex, colIndex);
                   onOpenCard(item, row.title);
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  onFocusCard(rowIndex, colIndex);
+                  onOpenCardMenu?.(item, rowIndex, colIndex);
                 }}
                 onMouseEnter={() => onFocusCard(rowIndex, colIndex)}
                 onFocus={() => onFocusCard(rowIndex, colIndex)}
@@ -326,8 +341,21 @@ export function ContentRow({
                   />
                 </div>
 
+                {/* Small accent dot directly under every open app card */}
+                <div
+                  aria-hidden={!isAppOpen}
+                  className="mt-2.5 flex h-[0.5rem] items-center justify-center"
+                >
+                  {isAppOpen && (
+                    <span
+                      title="Open now"
+                      className="h-[0.45rem] w-[0.45rem] rounded-full bg-[#38BDF8]"
+                    />
+                  )}
+                </div>
+
                 {/* App name visible under every card; brighter + subtitle revealed when focused */}
-                <div className="mt-4 min-h-[3.5rem] px-0.5">
+                <div className="mt-1.5 min-h-[3.5rem] px-0.5">
                   <div
                     className={`truncate text-[1.25rem] leading-snug font-semibold transition-opacity duration-150 ${
                       isFocused

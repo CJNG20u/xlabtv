@@ -1,27 +1,36 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import {
+  closeApp,
   fetchAppsWithStatus,
   fetchRemoteInfo,
   fetchStatus,
   fetchStoreWithStatus,
+  fetchUpdates,
   forgetAllPhones,
   isAppsPayloadEmpty,
   launchApp,
+  moveApp,
   sendPowerAction,
+  setAppHidden,
   submitStoreAction,
   type PowerAction,
   type RemotePairingInfo,
 } from './api';
 import { AmbientScreensaver } from './components/AmbientScreensaver';
+import {
+  buildCardMenuActions,
+  CardMenuModal,
+  type CardMenuActionId,
+} from './components/CardMenuModal';
 import { ContentRow } from './components/ContentRow';
 import { EmptyErrorState } from './components/EmptyErrorState';
 import { HeroBanner } from './components/HeroBanner';
 import { PhoneRemotePanel } from './components/PhoneRemotePanel';
 import {
-  POWER_OPTIONS,
   SettingsDrawer,
   type LauncherSettings,
+  type SettingsDrawerHandle,
 } from './components/SettingsDrawer';
 import { StoreDetailPanel } from './components/StoreDetailPanel';
 import { groupStoreItemsByCategory, StoreView } from './components/StoreView';
@@ -30,6 +39,7 @@ import { TopBar, type TopBarButton } from './components/TopBar';
 import { useGamepadInput, type SpatialAction } from './hooks/useGamepadInput';
 import {
   mockData,
+  mockOpenApps,
   mockStoreData,
   STORE_CARD_ID,
   storeCardItem,
@@ -40,6 +50,7 @@ import {
   type StoreItem,
   type StoreJobAction,
   type StoreJobState,
+  type UpdatesInfo,
 } from './mock';
 
 type FocusState =
@@ -65,6 +76,12 @@ interface ActivePreviewSource {
   colIndex: number;
 }
 
+interface CardMenuTarget {
+  item: RowItem;
+  rowIndex: number;
+  colIndex: number;
+}
+
 const DEFAULT_SETTINGS: LauncherSettings = {
   use24HourClock: true,
   autoAdvanceHero: true,
@@ -72,23 +89,28 @@ const DEFAULT_SETTINGS: LauncherSettings = {
   showNavHints: true,
 };
 
-const SETTINGS_ITEM_COUNT = 9; // 0 Phone remote, 1..4 Power & Session actions, 5..8 Display toggles
 const STATUS_POLL_INTERVAL_MS = 2000;
 const STORE_POLL_INTERVAL_MS = 2000;
 const APPS_IDLE_REFRESH_MS = 60_000;
+const UPDATES_POLL_INTERVAL_MS = 30 * 60 * 1000;
 const PREVIEW_FOCUS_DEBOUNCE_MS = 400;
 const PREVIEW_AUTO_ADVANCE_MS = 8000;
 const POWER_ARM_TIMEOUT_MS = 5000;
+const CARD_LONG_PRESS_MS = 600;
 const TOAST_DURATION_MS = 4500;
 const LAUNCH_TIMEOUT_MS = 20000;
 const SCREENSAVER_IDLE_MS = 10 * 60 * 1000;
 const PERSISTENT_API_FAILURE_THRESHOLD = 3;
 
 /**
- * Preserves backend row ordering, hides empty rows, and appends the Store card
- * to the end of the first non-media row (falling back to row 0 if all rows are media).
+ * Preserves backend row ordering, hides empty rows, appends the Store card
+ * to the end of the first non-media app row, and prepends an "Open now" row
+ * (most recent first) whenever at least one app is open.
  */
-function computeDisplayRows(rawRows: ContentRowData[]): ContentRowData[] {
+function computeDisplayRows(
+  rawRows: ContentRowData[],
+  openAppIds: string[] = []
+): ContentRowData[] {
   const nonEmpty = rawRows.filter((row) => row.items.length > 0);
   if (nonEmpty.length === 0) {
     return nonEmpty;
@@ -97,20 +119,52 @@ function computeDisplayRows(rawRows: ContentRowData[]): ContentRowData[] {
   const alreadyHasStore = nonEmpty.some((row) =>
     row.items.some((item) => item.id === STORE_CARD_ID)
   );
-  if (alreadyHasStore) {
-    return nonEmpty;
+
+  let withStore = nonEmpty;
+  if (!alreadyHasStore) {
+    const firstAppRowIdx = nonEmpty.findIndex((row) =>
+      row.items.some((item) => item.kind !== 'media')
+    );
+    const targetIdx = firstAppRowIdx >= 0 ? firstAppRowIdx : 0;
+
+    withStore = nonEmpty.map((row, idx) =>
+      idx === targetIdx
+        ? { ...row, items: [...row.items, storeCardItem] }
+        : row
+    );
   }
 
-  const firstAppRowIdx = nonEmpty.findIndex((row) =>
-    row.items.some((item) => item.kind !== 'media')
-  );
-  const targetIdx = firstAppRowIdx >= 0 ? firstAppRowIdx : 0;
+  if (openAppIds.length === 0) {
+    return withStore;
+  }
 
-  return nonEmpty.map((row, idx) =>
-    idx === targetIdx
-      ? { ...row, items: [...row.items, storeCardItem] }
-      : row
-  );
+  const appItemById = new Map<string, RowItem>();
+  for (const row of nonEmpty) {
+    for (const item of row.items) {
+      if (item.kind !== 'media' && !appItemById.has(item.id)) {
+        appItemById.set(item.id, item);
+      }
+    }
+  }
+
+  const seenOpen = new Set<string>();
+  const openItems: RowItem[] = [];
+  for (const id of openAppIds) {
+    if (seenOpen.has(id)) {
+      continue;
+    }
+    const found = appItemById.get(id);
+    if (found) {
+      seenOpen.add(id);
+      openItems.push(found);
+    }
+  }
+
+  if (openItems.length === 0) {
+    return withStore;
+  }
+
+  return [{ title: 'Open now', items: openItems }, ...withStore];
 }
 
 export default function App() {
@@ -147,12 +201,29 @@ export default function App() {
 
   const [settings, setSettings] = useState<LauncherSettings>(DEFAULT_SETTINGS);
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
-  const [settingsFocusIndex, setSettingsFocusIndex] = useState<number>(0);
   const [armedPowerAction, setArmedPowerAction] = useState<PowerAction | null>(
     null
   );
   const [pendingPowerAction, setPendingPowerAction] =
     useState<PowerAction | null>(null);
+
+  // Open apps from GET /api/status {"running", "open"}
+  const [openAppIds, setOpenAppIds] = useState<string[]>(
+    import.meta.env.DEV ? mockOpenApps : []
+  );
+
+  // Updates badge state from GET /api/updates (polled on mount + every 30 min)
+  const [updates, setUpdates] = useState<UpdatesInfo | null>(null);
+
+  // Card context menu state (long-press OK/Enter 600ms, ContextMenu, or 'm')
+  const [cardMenuTarget, setCardMenuTarget] = useState<CardMenuTarget | null>(
+    null
+  );
+  const [cardMenuFocusIndex, setCardMenuFocusIndex] = useState<number>(0);
+  const [cardMenuUninstallArmed, setCardMenuUninstallArmed] =
+    useState<boolean>(false);
+  const [cardMenuBusyAction, setCardMenuBusyAction] =
+    useState<CardMenuActionId | null>(null);
 
   // TV Phone Remote pairing panel state
   const [phoneRemoteOpen, setPhoneRemoteOpen] = useState<boolean>(false);
@@ -180,12 +251,17 @@ export default function App() {
     useState<ActivePreviewSource | null>(null);
   const [previewHeroIndex, setPreviewHeroIndex] = useState<number>(0);
 
+  const settingsDrawerRef = useRef<SettingsDrawerHandle | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const powerArmTimerRef = useRef<number | null>(null);
   const forgetArmTimerRef = useRef<number | null>(null);
+  const uninstallArmTimerRef = useRef<number | null>(null);
   const previewDebounceTimerRef = useRef<number | null>(null);
   const remoteFetchControllerRef = useRef<AbortController | null>(null);
   const launchTimeoutRef = useRef<number | null>(null);
+  const pendingLaunchRef = useRef<PendingLaunch | null>(null);
+  pendingLaunchRef.current = pendingLaunch;
+  const pendingLaunchStartedAtRef = useRef<number>(0);
   const idleTimerRef = useRef<number | null>(null);
 
   const lastLaunchedFocusRef = useRef<FocusState | null>(null);
@@ -201,9 +277,13 @@ export default function App() {
 
   const heroItems = launcherData.hero;
 
+  const openAppIdSet = useMemo(() => new Set(openAppIds), [openAppIds]);
+  const openAppIdsRef = useRef<string[]>(openAppIds);
+  openAppIdsRef.current = openAppIds;
+
   const rows = useMemo(
-    () => computeDisplayRows(launcherData.rows),
-    [launcherData.rows]
+    () => computeDisplayRows(launcherData.rows, openAppIds),
+    [launcherData.rows, openAppIds]
   );
 
   const rowsRef = useRef(rows);
@@ -271,6 +351,9 @@ export default function App() {
       }
       if (forgetArmTimerRef.current !== null) {
         window.clearTimeout(forgetArmTimerRef.current);
+      }
+      if (uninstallArmTimerRef.current !== null) {
+        window.clearTimeout(uninstallArmTimerRef.current);
       }
       if (previewDebounceTimerRef.current !== null) {
         window.clearTimeout(previewDebounceTimerRef.current);
@@ -367,7 +450,10 @@ export default function App() {
           setApiErrorMessage(null);
 
           const prevRows = rowsRef.current;
-          const nextRows = computeDisplayRows(result.data.rows);
+          const nextRows = computeDisplayRows(
+            result.data.rows,
+            openAppIdsRef.current
+          );
           const prevHeroItems = heroItemsRef.current;
           const prevHeroIdx = heroIndexRef.current;
           const focusedHeroId = prevHeroItems[prevHeroIdx]?.id ?? null;
@@ -542,6 +628,34 @@ export default function App() {
 
     return () => window.clearInterval(intervalId);
   }, [activeOverlayId, loadApps]);
+
+  // Poll GET /api/updates on mount and every 30 minutes
+  useEffect(() => {
+    let active = true;
+    const controller = new AbortController();
+
+    const syncUpdates = async (signal?: AbortSignal) => {
+      try {
+        const info = await fetchUpdates(signal);
+        if (active && info !== null) {
+          setUpdates(info);
+        }
+      } catch {
+        // Aborted on unmount
+      }
+    };
+
+    void syncUpdates(controller.signal);
+    const intervalId = window.setInterval(() => {
+      void syncUpdates();
+    }, UPDATES_POLL_INTERVAL_MS);
+
+    return () => {
+      active = false;
+      controller.abort();
+      window.clearInterval(intervalId);
+    };
+  }, []);
 
   // Apply fresh Store catalog and detect job transitions (done/failed -> toast + refetch /api/apps)
   const applyStoreItems = useCallback(
@@ -802,6 +916,17 @@ export default function App() {
         backendConnectedOnceRef.current = true;
         consecutiveStatusFailuresRef.current = 0;
 
+        // Sync open apps list (preserve most-recent-first order without redundant state churn)
+        setOpenAppIds((prev) => {
+          if (
+            prev.length === status.open.length &&
+            prev.every((id, i) => id === status.open[i])
+          ) {
+            return prev;
+          }
+          return status.open;
+        });
+
         if (status.running !== null) {
           prevConfirmedRunningRef.current = status.running;
           setPendingLaunch(null);
@@ -811,6 +936,7 @@ export default function App() {
           if (finishedId !== null) {
             prevConfirmedRunningRef.current = null;
             setConfirmedRunningId(null);
+            setPendingLaunch(null);
 
             const launchedItemId = lastLaunchedItemIdRef.current ?? finishedId;
             const targetFocus =
@@ -834,6 +960,15 @@ export default function App() {
               preferredItemId: launchedItemId,
               preferredFocus: targetFocus,
             });
+          } else if (
+            pendingLaunchRef.current &&
+            status.open.includes(pendingLaunchRef.current.id) &&
+            Date.now() - pendingLaunchStartedAtRef.current >= 1500
+          ) {
+            // Never block the home screen when an already-open app reports running: null
+            setPendingLaunch(null);
+            lastLaunchedFocusRef.current = null;
+            lastLaunchedItemIdRef.current = null;
           }
         }
       } finally {
@@ -1277,22 +1412,32 @@ export default function App() {
 
   const openSettings = useCallback(() => {
     clearArmedPower();
-    setSettingsFocusIndex(0);
+    setCardMenuTarget(null);
     setSettingsOpen(true);
   }, [clearArmedPower]);
 
-  const handleSettingsFocusChange = useCallback(
-    (nextIndex: number) => {
-      setSettingsFocusIndex(nextIndex);
-      const focusedPower =
-        nextIndex >= 1 && nextIndex <= POWER_OPTIONS.length
-          ? POWER_OPTIONS[nextIndex - 1]?.action ?? null
-          : null;
-      if (armedPowerAction && focusedPower !== armedPowerAction) {
-        clearArmedPower();
-      }
+  const clearUninstallArm = useCallback(() => {
+    setCardMenuUninstallArmed(false);
+    if (uninstallArmTimerRef.current !== null) {
+      window.clearTimeout(uninstallArmTimerRef.current);
+      uninstallArmTimerRef.current = null;
+    }
+  }, []);
+
+  const closeCardMenu = useCallback(() => {
+    clearUninstallArm();
+    setCardMenuBusyAction(null);
+    setCardMenuTarget(null);
+  }, [clearUninstallArm]);
+
+  const openCardMenu = useCallback(
+    (item: RowItem, rowIndex: number, colIndex: number) => {
+      clearUninstallArm();
+      setCardMenuBusyAction(null);
+      setCardMenuFocusIndex(0);
+      setCardMenuTarget({ item, rowIndex, colIndex });
     },
-    [armedPowerAction, clearArmedPower]
+    [clearUninstallArm]
   );
 
   // Two-press confirmation for Sleep / Restart / Shut down / Exit to desktop -> POST /api/power
@@ -1360,10 +1505,21 @@ export default function App() {
         return;
       }
 
+      pendingLaunchStartedAtRef.current = Date.now();
       setPendingLaunch({ id, name: displayName });
     },
     [launchingRequestId, activeOverlayId, showToast]
   );
+
+  const handleLaunchUpdates = useCallback(() => {
+    closeSettings();
+    void executeLaunch(
+      'updates',
+      'Updates',
+      { zone: 'topbar', button: 'settings' },
+      'updates'
+    );
+  }, [closeSettings, executeLaunch]);
 
   const handleOpenHero = useCallback(
     (item: HeroItem) => {
@@ -1395,17 +1551,215 @@ export default function App() {
     [openStore, executeLaunch]
   );
 
+  const cardMenuStoreItem = useMemo(
+    () =>
+      cardMenuTarget
+        ? storeItems.find(
+            (entry) => entry.id === cardMenuTarget.item.id && entry.installed
+          ) ?? null
+        : null,
+    [cardMenuTarget, storeItems]
+  );
+
+  const cardMenuActions = useMemo(() => {
+    if (!cardMenuTarget) {
+      return [];
+    }
+    return buildCardMenuActions(
+      cardMenuTarget.item,
+      openAppIdSet.has(cardMenuTarget.item.id),
+      cardMenuStoreItem !== null
+    );
+  }, [cardMenuTarget, openAppIdSet, cardMenuStoreItem]);
+
+  const handleCardMenuFocusChange = useCallback(
+    (nextIndex: number) => {
+      const clamped = Math.max(
+        0,
+        Math.min(cardMenuActions.length - 1, nextIndex)
+      );
+      setCardMenuFocusIndex(clamped);
+      if (
+        cardMenuUninstallArmed &&
+        cardMenuActions[clamped]?.id !== 'uninstall'
+      ) {
+        clearUninstallArm();
+      }
+    },
+    [cardMenuActions, cardMenuUninstallArmed, clearUninstallArm]
+  );
+
+  const handleCardMenuAction = useCallback(
+    async (actionId: CardMenuActionId) => {
+      if (!cardMenuTarget || cardMenuBusyAction !== null) {
+        return;
+      }
+      const { item, rowIndex, colIndex } = cardMenuTarget;
+
+      if (actionId === 'open') {
+        closeCardMenu();
+        handleOpenCard(item, rowIndex, colIndex);
+        return;
+      }
+
+      if (actionId === 'uninstall') {
+        if (!cardMenuStoreItem) {
+          return;
+        }
+        if (!cardMenuUninstallArmed) {
+          clearUninstallArm();
+          setCardMenuUninstallArmed(true);
+          uninstallArmTimerRef.current = window.setTimeout(() => {
+            setCardMenuUninstallArmed(false);
+            uninstallArmTimerRef.current = null;
+          }, POWER_ARM_TIMEOUT_MS);
+          return;
+        }
+
+        closeCardMenu();
+        await handleStoreAction(cardMenuStoreItem, 'remove');
+        return;
+      }
+
+      setCardMenuBusyAction(actionId);
+
+      if (actionId === 'close') {
+        const res = await closeApp(item.id);
+        setCardMenuBusyAction(null);
+        if (!res.ok) {
+          showToast(res.error, 'error');
+          return;
+        }
+        setOpenAppIds((prev) => prev.filter((id) => id !== item.id));
+        closeCardMenu();
+        showToast(`Closed ${item.name}`, 'info');
+        return;
+      }
+
+      if (actionId === 'move_left' || actionId === 'move_right') {
+        const direction = actionId === 'move_left' ? 'left' : 'right';
+        const res = await moveApp(item.id, direction);
+        setCardMenuBusyAction(null);
+        if (!res.ok) {
+          showToast(res.error, 'error');
+          return;
+        }
+
+        closeCardMenu();
+
+        // In dev mode without a backend, reorder locally so focus stays on the moved card
+        if (import.meta.env.DEV && !backendConnectedOnceRef.current) {
+          setLauncherData((prev) => {
+            const nextRawRows = prev.rows.map((row) => {
+              const idx = row.items.findIndex((entry) => entry.id === item.id);
+              if (idx < 0) return row;
+              const targetIdx =
+                direction === 'left'
+                  ? Math.max(0, idx - 1)
+                  : Math.min(row.items.length - 1, idx + 1);
+              if (targetIdx === idx) return row;
+              const copy = [...row.items];
+              const [moved] = copy.splice(idx, 1);
+              copy.splice(targetIdx, 0, moved);
+              return { ...row, items: copy };
+            });
+
+            const nextDisplay = computeDisplayRows(
+              nextRawRows,
+              openAppIdsRef.current
+            );
+            const currRowTitle = rowsRef.current[rowIndex]?.title;
+            let nextRowIdx = nextDisplay.findIndex(
+              (r) => r.title === currRowTitle
+            );
+            let nextColIdx =
+              nextRowIdx >= 0
+                ? nextDisplay[nextRowIdx].items.findIndex(
+                    (entry) => entry.id === item.id
+                  )
+                : -1;
+            if (nextColIdx < 0) {
+              for (let r = 0; r < nextDisplay.length; r++) {
+                const c = nextDisplay[r].items.findIndex(
+                  (entry) => entry.id === item.id
+                );
+                if (c >= 0) {
+                  nextRowIdx = r;
+                  nextColIdx = c;
+                  break;
+                }
+              }
+            }
+            if (nextRowIdx >= 0 && nextColIdx >= 0) {
+              setFocus({
+                zone: 'row',
+                rowIndex: nextRowIdx,
+                colIndex: nextColIdx,
+              });
+              setRowMemory((mem) => ({ ...mem, [nextRowIdx]: nextColIdx }));
+            }
+            return { ...prev, rows: nextRawRows };
+          });
+          return;
+        }
+
+        await loadApps({
+          silent: true,
+          preferredItemId: item.id,
+          preferredFocus: { zone: 'row', rowIndex, colIndex },
+        });
+        return;
+      }
+
+      if (actionId === 'hide') {
+        const res = await setAppHidden(item.id, true, item.name);
+        setCardMenuBusyAction(null);
+        if (!res.ok) {
+          showToast(res.error, 'error');
+          return;
+        }
+        closeCardMenu();
+        showToast(`${item.name} hidden from home`, 'info');
+
+        if (import.meta.env.DEV && !backendConnectedOnceRef.current) {
+          setLauncherData((prev) => ({
+            ...prev,
+            rows: prev.rows.map((row) => ({
+              ...row,
+              items: row.items.filter((entry) => entry.id !== item.id),
+            })),
+          }));
+          return;
+        }
+
+        await loadApps({ silent: true });
+      }
+    },
+    [
+      cardMenuTarget,
+      cardMenuBusyAction,
+      cardMenuStoreItem,
+      cardMenuUninstallArmed,
+      closeCardMenu,
+      handleOpenCard,
+      clearUninstallArm,
+      handleStoreAction,
+      showToast,
+      loadApps,
+    ]
+  );
+
   // Unified spatial input router for both Keyboard and Gamepad API
   const handleSpatialAction = useCallback(
     (action: SpatialAction) => {
       resetIdleTimer();
 
-      // Lock launcher input while an app is opening or actively running
+      // Lock launcher input while an app is actively opening
       if (activeOverlayId !== null) {
         return;
       }
 
-      // Gamepad Start toggles Settings from anywhere
+      // Gamepad Start toggles Quick Settings from anywhere
       if (action === 'settings') {
         if (phoneRemoteOpen || settingsOpen) {
           closeSettings();
@@ -1427,41 +1781,30 @@ export default function App() {
         return;
       }
 
-      // 1. Settings Side Panel spatial focus
+      // 1. Quick Settings Side Panel spatial focus
       if (settingsOpen) {
+        settingsDrawerRef.current?.handleAction(action);
+        return;
+      }
+
+      // 1b. Card Context Menu spatial focus
+      if (cardMenuTarget !== null) {
         if (action === 'back') {
-          closeSettings();
+          closeCardMenu();
           return;
         }
         if (action === 'up') {
-          handleSettingsFocusChange(Math.max(0, settingsFocusIndex - 1));
+          handleCardMenuFocusChange(cardMenuFocusIndex - 1);
           return;
         }
         if (action === 'down') {
-          handleSettingsFocusChange(
-            Math.min(SETTINGS_ITEM_COUNT - 1, settingsFocusIndex + 1)
-          );
+          handleCardMenuFocusChange(cardMenuFocusIndex + 1);
           return;
         }
         if (action === 'activate') {
-          if (settingsFocusIndex === 0) {
-            openPhoneRemote();
-          } else if (
-            settingsFocusIndex >= 1 &&
-            settingsFocusIndex <= POWER_OPTIONS.length
-          ) {
-            const powerOpt = POWER_OPTIONS[settingsFocusIndex - 1];
-            if (powerOpt) {
-              void handleTriggerPower(powerOpt.action);
-            }
-          } else if (settingsFocusIndex === 5) {
-            setSettings((s) => ({ ...s, use24HourClock: !s.use24HourClock }));
-          } else if (settingsFocusIndex === 6) {
-            setSettings((s) => ({ ...s, autoAdvanceHero: !s.autoAdvanceHero }));
-          } else if (settingsFocusIndex === 7) {
-            setSettings((s) => ({ ...s, showSubtitles: !s.showSubtitles }));
-          } else if (settingsFocusIndex === 8) {
-            setSettings((s) => ({ ...s, showNavHints: !s.showNavHints }));
+          const selected = cardMenuActions[cardMenuFocusIndex];
+          if (selected) {
+            void handleCardMenuAction(selected.id);
           }
         }
         return;
@@ -1590,6 +1933,16 @@ export default function App() {
       // 5. Main Home Launcher spatial focus
       if (action === 'back') {
         handleResetFocus();
+        return;
+      }
+
+      if (action === 'menu') {
+        if (focus.zone === 'row') {
+          const card = rows[focus.rowIndex]?.items[focus.colIndex];
+          if (card) {
+            openCardMenu(card, focus.rowIndex, focus.colIndex);
+          }
+        }
         return;
       }
 
@@ -1738,7 +2091,9 @@ export default function App() {
       activeOverlayId,
       phoneRemoteOpen,
       settingsOpen,
-      settingsFocusIndex,
+      cardMenuTarget,
+      cardMenuFocusIndex,
+      cardMenuActions,
       storeOpen,
       selectedStoreItem,
       submittingStoreItemId,
@@ -1748,7 +2103,6 @@ export default function App() {
       storeRowMemory,
       showEmptyOrErrorScreen,
       focus,
-      heroIndex,
       heroItems,
       displayedHeroItems,
       displayedHeroIndex,
@@ -1759,9 +2113,11 @@ export default function App() {
       closeSettings,
       openPhoneRemote,
       closePhoneRemote,
+      closeCardMenu,
+      openCardMenu,
+      handleCardMenuFocusChange,
+      handleCardMenuAction,
       handlePhoneRemotePrimaryAction,
-      handleSettingsFocusChange,
-      handleTriggerPower,
       handleStoreAction,
       closeStore,
       loadStore,
@@ -1776,24 +2132,95 @@ export default function App() {
     ]
   );
 
-  // Connect Gamepad API with idle tracking and wake-without-action behavior
+  const homeInteractive =
+    !settingsOpen &&
+    !phoneRemoteOpen &&
+    !storeOpen &&
+    cardMenuTarget === null &&
+    !screensaverActive &&
+    activeOverlayId === null;
+
+  const canLongPressCard =
+    homeInteractive && !showEmptyOrErrorScreen && focus.zone === 'row';
+
+  // Connect Gamepad API with idle tracking, wake-without-action, and 600ms long-press A on cards
   useGamepadInput({
     onAction: handleSpatialAction,
     onActivity: resetIdleTimer,
     isScreensaverActive: screensaverActive,
     onWakeScreensaver: wakeScreensaver,
+    enableLongPressActivate: canLongPressCard,
   });
 
-  // Global keyboard listener (any key wakes screensaver without triggering an action)
+  // Global keyboard listener (supports 600ms long-press OK/Enter, ContextMenu, 'm', and ignores text inputs)
   useEffect(() => {
+    let longPressTimer: number | null = null;
+    let longPressKey: string | null = null;
+    let longPressFired = false;
+
+    const clearLongPress = () => {
+      if (longPressTimer !== null) {
+        window.clearTimeout(longPressTimer);
+        longPressTimer = null;
+      }
+      longPressKey = null;
+      longPressFired = false;
+    };
+
+    const isEditableTarget = (target: EventTarget | null): boolean => {
+      if (!(target instanceof HTMLElement)) {
+        return false;
+      }
+      return (
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable
+      );
+    };
+
     const handleKeyDown = (event: KeyboardEvent) => {
       if (screensaverActive) {
         event.preventDefault();
+        clearLongPress();
         wakeScreensaver();
         return;
       }
 
       resetIdleTimer();
+
+      // Let native text inputs (e.g. Wi-Fi password) handle typing uninterrupted
+      if (isEditableTarget(event.target)) {
+        return;
+      }
+
+      if (event.key === 'ContextMenu' || event.key === 'm' || event.key === 'M') {
+        if (!event.repeat) {
+          event.preventDefault();
+          clearLongPress();
+          handleSpatialAction('menu');
+        }
+        return;
+      }
+
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        if (event.repeat) {
+          return;
+        }
+        if (canLongPressCard) {
+          clearLongPress();
+          longPressKey = event.key;
+          longPressFired = false;
+          longPressTimer = window.setTimeout(() => {
+            longPressTimer = null;
+            longPressFired = true;
+            handleSpatialAction('menu');
+          }, CARD_LONG_PRESS_MS);
+        } else {
+          handleSpatialAction('activate');
+        }
+        return;
+      }
 
       let action: SpatialAction | null = null;
       switch (event.key) {
@@ -1809,10 +2236,6 @@ export default function App() {
         case 'ArrowRight':
           action = 'right';
           break;
-        case 'Enter':
-        case ' ':
-          action = 'activate';
-          break;
         case 'Escape':
         case 'Backspace':
           action = 'back';
@@ -1826,12 +2249,41 @@ export default function App() {
       }
 
       event.preventDefault();
+      clearLongPress();
       handleSpatialAction(action);
     };
 
+    const handleKeyUp = (event: KeyboardEvent) => {
+      if (longPressKey !== null && event.key === longPressKey) {
+        const shouldActivate = !longPressFired;
+        clearLongPress();
+        if (shouldActivate) {
+          event.preventDefault();
+          handleSpatialAction('activate');
+        }
+      }
+    };
+
+    const handleWindowBlur = () => {
+      clearLongPress();
+    };
+
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [screensaverActive, wakeScreensaver, resetIdleTimer, handleSpatialAction]);
+    window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleWindowBlur);
+    return () => {
+      clearLongPress();
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', handleWindowBlur);
+    };
+  }, [
+    screensaverActive,
+    canLongPressCard,
+    wakeScreensaver,
+    resetIdleTimer,
+    handleSpatialAction,
+  ]);
 
   // Hero auto-advance (8 s for active app previews; 8.5 s for default hero when no static backdrop override)
   useEffect(() => {
@@ -1842,6 +2294,7 @@ export default function App() {
       settingsOpen ||
       phoneRemoteOpen ||
       storeOpen ||
+      cardMenuTarget !== null ||
       activeOverlayId !== null ||
       screensaverActive ||
       showEmptyOrErrorScreen ||
@@ -1870,6 +2323,7 @@ export default function App() {
     settingsOpen,
     phoneRemoteOpen,
     storeOpen,
+    cardMenuTarget,
     activeOverlayId,
     screensaverActive,
     showEmptyOrErrorScreen,
@@ -1877,12 +2331,6 @@ export default function App() {
   ]);
 
   const screensaverBackdrops = heroItems.length > 0 ? heroItems : mockData.hero;
-  const homeInteractive =
-    !settingsOpen &&
-    !phoneRemoteOpen &&
-    !storeOpen &&
-    !screensaverActive &&
-    activeOverlayId === null;
 
   return (
     <div className="relative min-h-screen w-full bg-[#090B10] text-[#F1F5F9]">
@@ -1892,6 +2340,7 @@ export default function App() {
         focusedButton={
           homeInteractive && focus.zone === 'topbar' ? focus.button : null
         }
+        updateCount={updates?.total ?? 0}
         onFocusStore={() => handleFocusTopBar('store')}
         onOpenStore={() => openStore({ zone: 'topbar', button: 'store' })}
         onFocusSettings={() => handleFocusTopBar('settings')}
@@ -1959,12 +2408,16 @@ export default function App() {
                     : (rowMemory[rowIndex] ?? 0)
                 }
                 showSubtitles={settings.showSubtitles}
+                openAppIds={openAppIdSet}
                 onFocusCard={handleFocusCard}
                 onOpenCard={(item) => {
                   const colIdx = row.items.findIndex(
                     (entry) => entry.id === item.id
                   );
                   handleOpenCard(item, rowIndex, colIdx >= 0 ? colIdx : 0);
+                }}
+                onOpenCardMenu={(item, rIdx, cIdx) => {
+                  openCardMenu(item, rIdx, cIdx);
                 }}
               />
             ))}
@@ -1974,8 +2427,8 @@ export default function App() {
           {settings.showNavHints && (
             <footer className="mt-10 flex items-center justify-between px-16 text-[0.95rem] text-[#64748B]">
               <span>
-                Arrows or Gamepad to navigate · Enter / A to open · Esc / B to
-                go back · Start for settings
+                Arrows or Gamepad to navigate · Enter / A to open · Hold OK or M
+                for options · Esc / B to go back · Start for settings
               </span>
               <span>xLab TV</span>
             </footer>
@@ -1998,6 +2451,7 @@ export default function App() {
           isGridActive={
             !settingsOpen &&
             !phoneRemoteOpen &&
+            cardMenuTarget === null &&
             !screensaverActive &&
             activeOverlayId === null &&
             selectedStoreItem === null
@@ -2022,19 +2476,37 @@ export default function App() {
         />
       )}
 
-      {/* Settings Side Panel with Phone Remote, Sleep, Restart, Shut down, Exit to desktop */}
+      {/* Card Context Menu (long-press OK/Enter 600 ms, ContextMenu, or 'm') */}
+      {cardMenuTarget && (
+        <CardMenuModal
+          card={cardMenuTarget.item}
+          actions={cardMenuActions}
+          focusedIndex={cardMenuFocusIndex}
+          uninstallArmed={cardMenuUninstallArmed}
+          busyAction={cardMenuBusyAction}
+          onFocusIndex={handleCardMenuFocusChange}
+          onSelectAction={(actionId) => void handleCardMenuAction(actionId)}
+          onClose={closeCardMenu}
+        />
+      )}
+
+      {/* Quick Settings Right-Side Panel */}
       <SettingsDrawer
+        ref={settingsDrawerRef}
         isOpen={settingsOpen}
-        focusedIndex={settingsFocusIndex}
+        updates={updates}
         armedPowerAction={armedPowerAction}
         pendingPowerAction={pendingPowerAction}
         settings={settings}
-        onFocusIndex={handleSettingsFocusChange}
+        onClearArmedPower={clearArmedPower}
+        onLaunchUpdates={handleLaunchUpdates}
         onOpenPhoneRemote={openPhoneRemote}
         onTriggerPower={(action) => void handleTriggerPower(action)}
         onUpdateSettings={(patch) =>
           setSettings((prev) => ({ ...prev, ...patch }))
         }
+        onAppsChanged={() => void loadApps({ silent: true })}
+        onNotify={showToast}
         onClose={closeSettings}
       />
 

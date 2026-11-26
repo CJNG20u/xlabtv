@@ -612,4 +612,137 @@ export const mockStoreData: StorePayload = {
   ],
 };
 
+export interface WifiNetwork {
+  ssid: string;
+  signal: number;
+  secure: boolean;
+  connected: boolean;
+}
+
+export interface WifiSettingsState {
+  enabled: boolean;
+  ethernet: boolean;
+  connected: { ssid: string; signal: number } | null;
+  networks: WifiNetwork[];
+}
+
+export interface BluetoothDevice {
+  mac: string;
+  name: string;
+  paired: boolean;
+  connected: boolean;
+}
+
+export interface BluetoothSettingsState {
+  available: boolean;
+  powered: boolean;
+  devices: BluetoothDevice[];
+}
+
+export interface AudioOutput {
+  id: string;
+  name: string;
+  default: boolean;
+}
+
+export interface AudioSettingsState {
+  outputs: AudioOutput[];
+  volume: number;
+  muted: boolean;
+}
+
+export interface UpdatesInfo {
+  xlabtv: boolean | number;
+  apps: number;
+  system: number;
+  total: number;
+  checked: string | null;
+}
+
+export interface HiddenAppItem {
+  id: string;
+  name: string;
+}
+
+export interface HiddenAppsPayload {
+  apps: HiddenAppItem[];
+}
+
+export const mockOpenApps: string[] = ['nuvio', 'youtube'];
+
+export const mockWifiSettings: WifiSettingsState = {
+  enabled: true,
+  ethernet: true,
+  connected: { ssid: 'LivingRoom_5G', signal: 84 },
+  networks: [
+    { ssid: 'LivingRoom_5G', signal: 84, secure: true, connected: true },
+    { ssid: 'Studio_Mesh', signal: 66, secure: true, connected: false },
+    { ssid: 'Guest_Lounge', signal: 48, secure: false, connected: false },
+    { ssid: 'Neighbor_Fiber', signal: 28, secure: true, connected: false },
+  ],
+};
+
+export const mockBluetoothSettings: BluetoothSettingsState = {
+  available: true,
+  powered: true,
+  devices: [
+    {
+      mac: 'DC:A6:32:18:4F:01',
+      name: 'DualSense Wireless Controller',
+      paired: true,
+      connected: true,
+    },
+    {
+      mac: '94:DB:56:AA:21:8E',
+      name: 'Sony WH-1000XM5',
+      paired: true,
+      connected: false,
+    },
+    {
+      mac: '7C:96:D2:41:09:B4',
+      name: '8BitDo Pro 2',
+      paired: false,
+      connected: false,
+    },
+  ],
+};
+
+export const mockAudioSettings: AudioSettingsState = {
+  outputs: [
+    {
+      id: 'alsa_output.pci-0000_00_1f.3.hdmi-stereo',
+      name: 'HDMI / DisplayPort — LG OLED TV',
+      default: true,
+    },
+    {
+      id: 'alsa_output.usb-Topping_E30_II-00.analog-stereo',
+      name: 'USB Audio DAC — Living Room Amp',
+      default: false,
+    },
+    {
+      id: 'bluez_output.94_DB_56_AA_21_8E.1',
+      name: 'Sony WH-1000XM5 (Bluetooth)',
+      default: false,
+    },
+  ],
+  volume: 65,
+  muted: false,
+};
+
+export const mockUpdatesInfo: UpdatesInfo = {
+  xlabtv: true,
+  apps: 2,
+  system: 5,
+  total: 8,
+  checked: new Date().toISOString(),
+};
+
+export const mockHiddenApps: HiddenAppsPayload = {
+  apps: [
+    { id: 'ambient-loops', name: 'Fireplace & Rain' },
+    { id: 'system-shell', name: 'System Shell' },
+  ],
+};
+
 export default mockData;
+
