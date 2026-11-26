@@ -19,14 +19,38 @@ git clone https://github.com/CJNG20u/xlabtv.git && cd xlabtv
 ./install.sh --autologin   # also logs in automatically and keeps the screen on
 ```
 
-Then edit `~/.config/xlab-tv/apps.json` to add your apps (see `apps.example.json`).
-Each app is a name, a colour, an optional `icon`/`backdrop` image path, and the
-command that starts it, written as a list (`["flatpak", "run", "org.example.App"]`).
-Check your edits with:
+## Apps
+
+xLab TV finds installed TV apps by itself and puts them in rows (Watch, Music, Play):
+Nuvio, Stremio, Jellyfin, Plex, Kodi, YouTube (VacuumTube), FreeTube, Spotify, Steam
+(Big Picture), Moonlight, and Netflix, Prime Video and Disney+ in Chrome. Icons come
+from the installed apps.
 
 ```sh
-python3 /usr/lib/xlab-tv/xlabtv/server.py --check
+xlab-tv-apps list                          # what's available and installed
+xlab-tv-apps install youtube jellyfin      # Flatpaks from Flathub; "nuvio" gets its .deb
 ```
+
+New apps show up the next time xLab TV starts (log out and back in). To add your own app,
+hide one, or set your own rows, edit `~/.config/xlab-tv/apps.json`:
+
+```json
+{
+  "hidden": ["freetube"],
+  "apps": {
+    "iptv": { "name": "Live TV", "subtitle": "Dispatcharr", "color": "#0f766e",
+              "row": "Watch", "command": ["flatpak", "run", "tv.kodi.Kodi"] }
+  },
+  "hero": ["nuvio"]
+}
+```
+
+An app in `apps` with a catalog id (e.g. `"youtube"`) replaces that catalog entry.
+Optional keys per app: `icon` and `backdrop` (image paths). Check your edits with
+`python3 /usr/lib/xlab-tv/xlabtv/server.py --check`.
+
+Netflix, Prime Video and Disney+ open in Chrome (install with `xlab-tv-apps install netflix`);
+on Linux these services stream at lower resolution than on a TV or streaming stick.
 
 ## The UI
 

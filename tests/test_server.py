@@ -20,6 +20,14 @@ def write_config(folder: Path, data: dict) -> Path:
     return path
 
 
+DETECTED = {
+    "youtube": {"name": "YouTube", "subtitle": "", "color": "#f00", "row": "Watch",
+                "command": ["flatpak", "run", "rocks.shy.VacuumTube"], "media": {}},
+    "kodi": {"name": "Kodi", "subtitle": "", "color": "#0ff", "row": "Watch", "command": ["kodi"], "media": {}},
+    "spotify": {"name": "Spotify", "subtitle": "", "color": "#0f0", "row": "Music",
+                "command": ["flatpak", "run", "com.spotify.Client"], "media": {}},
+}
+
 BASE = {
     "rows": [{"title": "Apps", "apps": ["sleeper", "missing"]}],
     "apps": {
@@ -40,12 +48,25 @@ class ConfigTests(unittest.TestCase):
 
     def test_example_config_is_valid(self):
         cfg = server.load_config(Path(__file__).resolve().parents[1] / "apps.example.json")
-        self.assertEqual(cfg["hero"], ["nuvio"])
+        self.assertEqual(cfg["apps"], {})  # no custom apps: they come from the catalog
 
-    def test_unknown_app_in_row_is_rejected(self):
-        bad = dict(BASE, rows=[{"title": "x", "apps": ["nope"]}])
-        with self.assertRaises(server.ConfigError):
-            server.load_config(write_config(self.dir, bad))
+    def test_missing_config_is_fine(self):
+        cfg = server.load_config(self.dir / "nope.json", {"kodi": DETECTED["kodi"]})
+        self.assertEqual(cfg["rows"], [{"title": "Watch", "apps": ["kodi"]}])
+        self.assertEqual(cfg["hero"], ["kodi"])
+
+    def test_unknown_or_missing_app_in_row_is_skipped(self):
+        cfg = server.load_config(write_config(self.dir, dict(BASE, rows=[{"title": "x", "apps": ["nope", "sleeper"]}])))
+        self.assertEqual(cfg["rows"], [{"title": "x", "apps": ["sleeper"]}])
+
+    def test_detected_apps_rows_hidden_and_override(self):
+        user = {"hidden": ["kodi"], "apps": {"spotify": {"command": ["my-spotify"]}, "mine": {"command": ["x"]}}}
+        cfg = server.load_config(write_config(self.dir, user), dict(DETECTED), ["Watch", "Music"])
+        self.assertNotIn("kodi", cfg["apps"])
+        self.assertEqual(cfg["apps"]["spotify"]["command"], ["my-spotify"])
+        self.assertEqual(cfg["apps"]["spotify"]["name"], "Spotify")  # kept from the catalog
+        self.assertEqual([r["title"] for r in cfg["rows"]], ["Watch", "Music", "Apps"])
+        self.assertEqual(cfg["hero"], ["youtube"])
 
     def test_command_must_be_list(self):
         bad = {"apps": {"a": {"command": "rm -rf /"}}}
@@ -75,11 +96,11 @@ class ServerTests(unittest.TestCase):
         ui.mkdir()
         (ui / "index.html").write_text('<html><head><meta name="xlab-token" content="" /></head><body>ui</body></html>')
         (ui / "app.js").write_text("console.log(1)")
-        self.config = server.load_config(write_config(self.dir, BASE))
-        self.launcher = server.Launcher(self.config)
+        self.library = server.Library(write_config(self.dir, BASE), detect=lambda: {})
+        self.launcher = server.Launcher(self.library)
         self.power_calls = []
         port_ref = [0]
-        handler = server.make_handler(self.config, self.launcher, ui, TOKEN, port_ref,
+        handler = server.make_handler(self.library, self.launcher, ui, TOKEN, port_ref,
                                       run=lambda cmd, **kw: self.power_calls.append(cmd))
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         port_ref[0] = self.port = self.httpd.server_address[1]

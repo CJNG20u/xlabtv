@@ -1,21 +1,5 @@
 {
-  "hero": ["nuvio"],
-  "rows": [
-    { "title": "Your apps", "apps": ["nuvio", "youtube"] }
-  ],
-  "apps": {
-    "nuvio": {
-      "name": "Nuvio",
-      "subtitle": "Movies and shows",
-      "color": "#7c3aed",
-      "command": ["nuvio-desktop"]
-    },
-    "youtube": {
-      "name": "YouTube",
-      "subtitle": "VacuumTube",
-      "color": "#dc2626",
-      "command": ["flatpak", "run", "rocks.shy.VacuumTube"]
-    }
-  },
+  "hidden": [],
+  "apps": {},
   "power": true
 }

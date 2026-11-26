@@ -20,7 +20,11 @@ sudo apt-get install -y python3 python3-gi gir1.2-gtk-4.0 gir1.2-webkit-6.0
 
 echo "==> Copying xLab TV to $PREFIX"
 sudo mkdir -p "$PREFIX/xlabtv" "$PREFIX/session" "$PREFIX/ui"
-sudo install -m 0644 xlabtv/server.py xlabtv/window.py xlabtv/fallback.html "$PREFIX/xlabtv/"
+sudo install -m 0644 xlabtv/server.py xlabtv/apps.py xlabtv/catalog.json xlabtv/window.py \
+    xlabtv/fallback.html "$PREFIX/xlabtv/"
+# "xlab-tv-apps list" / "xlab-tv-apps install youtube spotify"
+printf '#!/bin/sh\nexec python3 %s/xlabtv/apps.py "$@"\n' "$PREFIX" | sudo tee /usr/local/bin/xlab-tv-apps >/dev/null
+sudo chmod 0755 /usr/local/bin/xlab-tv-apps
 sudo install -m 0755 session/xlab-tv-kiosk "$PREFIX/session/"
 sudo install -m 0644 session/user.js "$PREFIX/session/"
 # name and icon for the window in the app switcher
@@ -48,12 +52,18 @@ if sudo grep -q '^Session=xlab-tv' "$ACCT" 2>/dev/null; then
 fi
 
 CONFIG=${XDG_CONFIG_HOME:-$HOME/.config}/xlab-tv/apps.json
+# The first version's example listed fixed rows, which would hide catalog apps: replace it.
+if [ -f "$CONFIG" ] && grep -q '"title": "Your apps"' "$CONFIG" && grep -q 'rocks.shy.VacuumTube' "$CONFIG"; then
+    mv "$CONFIG" "$CONFIG.old"
+    echo "==> Moved the old example app list to $CONFIG.old (apps are now found automatically)"
+fi
 if [ ! -f "$CONFIG" ]; then
     mkdir -p "$(dirname "$CONFIG")"
     cp apps.example.json "$CONFIG"
     echo "==> Wrote your app list to $CONFIG (edit it to add apps)"
 fi
 python3 "$PREFIX/xlabtv/server.py" --config "$CONFIG" --check
+echo "    Add more with: xlab-tv-apps list   then   xlab-tv-apps install youtube spotify ..."
 
 echo "==> Starting the launcher at login"
 AUTOSTART=${XDG_CONFIG_HOME:-$HOME/.config}/autostart

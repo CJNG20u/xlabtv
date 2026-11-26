@@ -17,9 +17,12 @@ import secrets
 import subprocess
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
+
+import apps as apps_catalog  # noqa: E402  (xlabtv/apps.py, beside this file)
 
 MAX_BODY = 4096
 POWER_COMMANDS = {
@@ -40,20 +43,31 @@ def _expand(path: str, base: Path) -> Path:
     return p if p.is_absolute() else (base / p)
 
 
-def load_config(path: Path) -> dict:
-    """Read and validate apps.json. Raises ConfigError with a readable message."""
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ConfigError(f"cannot read {path}: {exc}") from exc
-    if not isinstance(raw, dict):
-        raise ConfigError("config must be a JSON object")
+def load_config(path: Path, detected: dict | None = None, catalog_rows: list | None = None) -> dict:
+    """Combine the installed catalog apps with the user's apps.json.
 
-    apps = raw.get("apps")
-    if not isinstance(apps, dict) or not apps:
-        raise ConfigError('"apps" must be a non-empty object')
-    clean_apps = {}
-    for app_id, app in apps.items():
+    apps.json is optional. It can add custom apps ("apps"), replace a catalog
+    app by using its id, hide catalog apps ("hidden"), set the rows and the hero.
+    Raises ConfigError with a readable message when apps.json is malformed.
+    """
+    raw: dict = {}
+    if path.exists():
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ConfigError(f"cannot read {path}: {exc}") from exc
+        if not isinstance(raw, dict):
+            raise ConfigError("config must be a JSON object")
+
+    custom = raw.get("apps", {})
+    if not isinstance(custom, dict):
+        raise ConfigError('"apps" must be an object')
+    hidden = raw.get("hidden", [])
+    if not isinstance(hidden, list):
+        raise ConfigError('"hidden" must be a list of app ids')
+
+    apps = {k: v for k, v in (detected or {}).items() if k not in hidden}
+    for app_id, app in custom.items():
         if not isinstance(app, dict):
             raise ConfigError(f"app {app_id!r} must be an object")
         cmd = app.get("command")
@@ -63,35 +77,69 @@ def load_config(path: Path) -> dict:
         for key in ("icon", "backdrop"):
             if app.get(key):
                 media[key] = _expand(str(app[key]), path.parent)
-        clean_apps[app_id] = {
-            "name": str(app.get("name") or app_id),
-            "subtitle": str(app.get("subtitle") or ""),
-            "color": str(app.get("color") or "#3b82f6"),
+        base = apps.get(app_id, {})
+        apps[app_id] = {
+            "name": str(app.get("name") or base.get("name") or app_id),
+            "subtitle": str(app.get("subtitle") or base.get("subtitle") or ""),
+            "color": str(app.get("color") or base.get("color") or "#3b82f6"),
+            "row": str(app.get("row") or base.get("row") or "Apps"),
             "command": cmd,
-            "media": media,
+            "media": media or base.get("media", {}),
         }
 
-    rows = raw.get("rows") or [{"title": "Apps", "apps": list(clean_apps)}]
+    rows = raw.get("rows")
     clean_rows = []
-    for row in rows:
-        ids = row.get("apps") if isinstance(row, dict) else None
-        if not isinstance(ids, list):
-            raise ConfigError('each row needs "title" and an "apps" list')
-        for app_id in ids:
-            if app_id not in clean_apps:
-                raise ConfigError(f"row {row.get('title')!r} lists unknown app {app_id!r}")
-        clean_rows.append({"title": str(row.get("title") or ""), "apps": ids})
+    if rows:
+        for row in rows:
+            ids = row.get("apps") if isinstance(row, dict) else None
+            if not isinstance(ids, list):
+                raise ConfigError('each row needs "title" and an "apps" list')
+            # apps that are not installed (or unknown) are left out, not an error
+            clean_rows.append({"title": str(row.get("title") or ""), "apps": [i for i in ids if i in apps]})
+    else:
+        order = list(catalog_rows or [])
+        order += [a["row"] for a in apps.values() if a["row"] not in order]
+        for title in order:
+            ids = [app_id for app_id, a in apps.items() if a["row"] == title]
+            if ids:
+                clean_rows.append({"title": title, "apps": ids})
 
     hero = raw.get("hero")
-    if not hero:
-        hero = [next(iter(clean_apps))]
-    if not isinstance(hero, list):
+    if hero is not None and not isinstance(hero, list):
         raise ConfigError('"hero" must be a list of app ids')
-    for app_id in hero:
-        if app_id not in clean_apps:
-            raise ConfigError(f"hero lists unknown app {app_id!r}")
+    hero = [h for h in (hero or []) if h in apps]
+    if not hero:
+        first = next((r["apps"][0] for r in clean_rows if r["apps"]), None)
+        hero = [first] if first else []
 
-    return {"apps": clean_apps, "rows": clean_rows, "hero": hero, "power": bool(raw.get("power", True))}
+    return {"apps": apps, "rows": clean_rows, "hero": hero, "power": bool(raw.get("power", True))}
+
+
+class Library:
+    """The current app list: installed apps are looked up again at most every 30 s."""
+
+    def __init__(self, path: Path, catalog: dict | None = None, detect=None, ttl: float = 30.0):
+        self.path = path
+        self.catalog = catalog
+        self.detect = detect or (lambda: apps_catalog.detect(self.catalog) if self.catalog else {})
+        self.ttl = ttl
+        self._lock = threading.Lock()
+        self._config: dict | None = None
+        self._at = 0.0
+
+    def get(self) -> dict:
+        with self._lock:
+            now = time.monotonic()
+            if self._config is None or now - self._at > self.ttl:
+                rows = self.catalog.get("rows") if self.catalog else None
+                try:
+                    self._config = load_config(self.path, self.detect(), rows)
+                except ConfigError as exc:
+                    if self._config is None:
+                        raise
+                    print(f"xlab-tv: {exc} (keeping the previous app list)", file=sys.stderr)
+                self._at = now
+            return self._config
 
 
 def api_apps(config: dict) -> dict:
@@ -135,8 +183,8 @@ def api_apps(config: dict) -> dict:
 class Launcher:
     """Runs one app at a time and reports which one is in front."""
 
-    def __init__(self, config: dict, log_path: Path | None = None):
-        self.config = config
+    def __init__(self, library, log_path: Path | None = None):
+        self.library = library
         self.log_path = log_path
         self._lock = threading.Lock()
         self._proc: subprocess.Popen | None = None
@@ -149,11 +197,14 @@ class Launcher:
             return self._running
 
     def launch(self, app_id: str) -> None:
-        app = self.config["apps"].get(app_id)
+        apps = self.library.get()["apps"]
+        app = apps.get(app_id)
         if app is None:
             raise KeyError(app_id)
-        if self.status() is not None:
-            raise RuntimeError(f"{self.config['apps'][self._running]['name']} is already open")
+        running = self.status()
+        if running is not None:
+            name = apps.get(running, {}).get("name", running)
+            raise RuntimeError(f"{name} is already open")
         log = open(self.log_path, "ab") if self.log_path else subprocess.DEVNULL
         try:
             proc = subprocess.Popen(
@@ -172,11 +223,8 @@ class Launcher:
             self._proc, self._running = proc, app_id
 
 
-def make_handler(config: dict, launcher: Launcher, ui_dir: Path | None, token: str, port_ref: list,
+def make_handler(library, launcher: Launcher, ui_dir: Path | None, token: str, port_ref: list,
                  on_exit=None, run=subprocess.Popen):
-    allowed_media = {
-        (app_id, key): path for app_id, app in config["apps"].items() for key, path in app["media"].items()
-    }
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "xlab-tv"
@@ -218,13 +266,15 @@ def make_handler(config: dict, launcher: Launcher, ui_dir: Path | None, token: s
                 if not self._token_ok():
                     return self._json(401, {"ok": False, "error": "bad token"})
                 if path == "/api/apps":
-                    return self._json(200, api_apps(config))
+                    return self._json(200, api_apps(library.get()))
                 if path == "/api/status":
                     return self._json(200, {"running": launcher.status()})
                 return self._json(404, {"ok": False, "error": "not found"})
             if path.startswith("/media/"):
                 parts = path.split("/")
-                media = allowed_media.get(tuple(parts[2:4])) if len(parts) == 4 else None
+                media = None
+                if len(parts) == 4:
+                    media = library.get()["apps"].get(parts[2], {}).get("media", {}).get(parts[3])
                 if media is None or not media.is_file():
                     return self._send(404, b"not found", "text/plain")
                 ctype = mimetypes.guess_type(media.name)[0] or "application/octet-stream"
@@ -292,7 +342,7 @@ def make_handler(config: dict, launcher: Launcher, ui_dir: Path | None, token: s
                     self._json(200, {"ok": True})
                     threading.Thread(target=on_exit, daemon=True).start()
                     return None
-                if not config["power"] or action not in POWER_COMMANDS:
+                if not library.get()["power"] or action not in POWER_COMMANDS:
                     return self._json(400, {"ok": False, "error": "power action not allowed"})
                 try:
                     run(POWER_COMMANDS[action], stdin=subprocess.DEVNULL)
@@ -319,13 +369,15 @@ def main(argv=None) -> int:
     ap.add_argument("--port-file", type=Path, default=None, help="write the port in use here")
     args = ap.parse_args(argv)
 
+    library = Library(args.config, apps_catalog.load_catalog())
     try:
-        config = load_config(args.config)
+        config = library.get()
     except ConfigError as exc:
         print(f"xlab-tv: {exc}", file=sys.stderr)
         return 2
     if args.check:
-        print(f"xlab-tv: {args.config} is valid ({len(config['apps'])} apps)")
+        names = ", ".join(a["name"] for a in config["apps"].values()) or "none yet"
+        print(f"xlab-tv: config OK. Apps found: {names}")
         return 0
     ui_dir = args.ui if args.ui and (args.ui / "index.html").is_file() else None
     if args.ui and ui_dir is None:
@@ -333,13 +385,13 @@ def main(argv=None) -> int:
 
     token = secrets.token_urlsafe(24)
     port_ref = [args.port]
-    launcher = Launcher(config, args.log)
+    launcher = Launcher(library, args.log)
     httpd: ThreadingHTTPServer
 
     def stop():
         httpd.shutdown()
 
-    handler = make_handler(config, launcher, ui_dir, token, port_ref, on_exit=stop)
+    handler = make_handler(library, launcher, ui_dir, token, port_ref, on_exit=stop)
     try:
         httpd = ThreadingHTTPServer(("127.0.0.1", args.port), handler)
     except OSError as exc:
