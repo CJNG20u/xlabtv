@@ -157,7 +157,7 @@ def add_previews(config: dict, detected: dict, continue_watching=None, youtube=N
             items = []
         nuvio_ids = attach("nuvio", [(
             _preview_id("cw-", f"{i['type']}:{i['metaId']}"),
-            {"name": i["title"], "subtitle": i["subtitle"], "color": nuvio_app["color"],
+            {"name": i["title"], "subtitle": i["subtitle"], "color": nuvio_app["color"], "parent": "nuvio",
              "row": CONTINUE_ROW, "command": [*nuvio_app["command"], nuvio.deep_link(i)], "media": {},
              "kind": "media", "progress": i["progress"], "eyebrow": "Continue watching in Nuvio",
              "art": {k: i[k] for k in ("backdrop", "poster", "thumbnail", "logo")}},
@@ -173,6 +173,7 @@ def add_previews(config: dict, detected: dict, continue_watching=None, youtube=N
         attach("youtube", [(
             _preview_id("yt-", v["videoId"]),
             {"name": v["title"], "subtitle": v["subtitle"], "color": yt_app["color"], "row": "YouTube",
+             "parent": "youtube",
              "command": [*yt_app["command"], v["url"], "--fullscreen"], "media": {}, "kind": "media",
              "eyebrow": "New on YouTube",
              "art": {"backdrop": v["backdrop"], "thumbnail": v["backdrop"], "poster": "",
@@ -279,31 +280,54 @@ def api_apps(config: dict) -> dict:
     }
 
 
-class Launcher:
-    """Runs one app at a time and reports which one is in front."""
+OPENING_SECONDS = 8  # how long the UI may show "Opening…" after a launch
 
-    def __init__(self, library, log_path: Path | None = None):
+
+class Launcher:
+    """Starts apps; several can be open at once. Opening one that is already open runs its
+    command again, which brings it forward for single-instance apps (Nuvio, browsers, most
+    Flatpaks); previews (a Nuvio title, a YouTube video) go to their app the same way."""
+
+    def __init__(self, library, log_path: Path | None = None, clock=time.monotonic):
         self.library = library
         self.log_path = log_path
+        self.clock = clock
         self._lock = threading.Lock()
-        self._proc: subprocess.Popen | None = None
-        self._running: str | None = None
+        self._procs: dict[str, subprocess.Popen] = {}   # app id -> first process started for it
+        self._order: list[str] = []                     # most recently opened last
+        self._opening: tuple[str, float] | None = None
+
+    def _prune(self):
+        for app_id, proc in list(self._procs.items()):
+            if proc.poll() is not None:
+                del self._procs[app_id]
+                self._order = [a for a in self._order if a != app_id]
 
     def status(self) -> str | None:
+        """The app being opened right now (for a few seconds after a launch), else None."""
         with self._lock:
-            if self._proc is not None and self._proc.poll() is not None:
-                self._proc, self._running = None, None
-            return self._running
+            self._prune()
+            if self._opening and self.clock() - self._opening[1] < OPENING_SECONDS:
+                return self._opening[0]
+            self._opening = None
+            return None
+
+    def open_apps(self) -> list[str]:
+        with self._lock:
+            self._prune()
+            return list(self._order)
+
+    def front(self) -> str | None:
+        """The most recently opened app that is still running."""
+        apps = self.open_apps()
+        return apps[-1] if apps else None
 
     def launch(self, app_id: str) -> None:
         apps = self.library.get()["apps"]
         app = apps.get(app_id)
         if app is None:
             raise KeyError(app_id)
-        running = self.status()
-        if running is not None:
-            name = apps.get(running, {}).get("name", running)
-            raise RuntimeError(f"{name} is already open")
+        owner = app.get("parent", app_id)  # a preview belongs to its app
         log = open(self.log_path, "ab") if self.log_path else subprocess.DEVNULL
         try:
             proc = subprocess.Popen(
@@ -319,12 +343,22 @@ class Launcher:
             if log is not subprocess.DEVNULL:
                 log.close()
         with self._lock:
-            self._proc, self._running = proc, app_id
+            self._prune()
+            if owner not in self._procs:
+                self._procs[owner] = proc
+            else:
+                # Already open: this second start hands over to the open window and exits;
+                # reap it in the background so it doesn't linger as a zombie.
+                threading.Thread(target=proc.wait, daemon=True).start()
+            self._order = [a for a in self._order if a != owner] + [owner]
+            self._opening = (app_id, self.clock())
 
-    def stop(self) -> bool:
-        """Close the app in front (the remote's Home button). True if one was running."""
+    def stop(self, app_id: str | None = None) -> bool:
+        """Close an app (default: the most recently opened one). True if one was running."""
         with self._lock:
-            proc = self._proc
+            self._prune()
+            target = app_id or (self._order[-1] if self._order else None)
+            proc = self._procs.get(target) if target else None
         if proc is None or proc.poll() is not None:
             return False
         try:
@@ -335,6 +369,8 @@ class Launcher:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             os.killpg(proc.pid, signal.SIGKILL)
+        with self._lock:
+            self._prune()
         return True
 
 
@@ -383,7 +419,7 @@ def make_handler(library, launcher: Launcher, ui_dir: Path | None, token: str, p
                 if path == "/api/apps":
                     return self._json(200, api_apps(library.get()))
                 if path == "/api/status":
-                    return self._json(200, {"running": launcher.status()})
+                    return self._json(200, {"running": launcher.status(), "open": launcher.open_apps()})
                 if path == "/api/remote" and remote is not None:
                     return self._json(200, remote.info())
                 if path == "/api/store" and store is not None:
@@ -457,6 +493,10 @@ def make_handler(library, launcher: Launcher, ui_dir: Path | None, token: str, p
                     return self._json(404, {"ok": False, "error": "unknown app"})
                 except RuntimeError as exc:
                     return self._json(409, {"ok": False, "error": str(exc)})
+                return self._json(200, {"ok": True})
+            if path == "/api/close":
+                if not launcher.stop(str(body.get("id", ""))):
+                    return self._json(404, {"ok": False, "error": "that app is not open"})
                 return self._json(200, {"ok": True})
             if path == "/api/remote" and remote is not None:
                 if body.get("action") != "forget":

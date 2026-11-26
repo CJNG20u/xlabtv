@@ -135,8 +135,9 @@ The UI talks to the service through this API. Every `/api/*` call needs the head
 | Call | Body | Answer |
 |---|---|---|
 | `GET /api/apps` | | `{hero: [{id, appId, title, subtitle, backdrop}], rows: [{title, items: [{id, name, subtitle, icon, color}]}], power}` |
-| `POST /api/launch` | `{"id": "nuvio"}` | `{ok: true}` or `{ok: false, error}` |
-| `GET /api/status` | | `{running: "nuvio" \| null}` |
+| `POST /api/launch` | `{"id": "nuvio"}` | `{ok: true}` or `{ok: false, error}`. Several apps can be open; launching an open one brings it forward |
+| `GET /api/status` | | `{running: id \| null, open: [ids]}`: `running` is the app being opened (only for the first 8 s after a launch); `open` lists every app still running, most recent last |
+| `POST /api/close` | `{"id": "nuvio"}` | `{ok: true}`, or 404 if it isn't open |
 | `GET /api/store` | | `{items: [{id, name, subtitle, description, category, color, icon, installed, job}]}`, `job` = `null` or `{action, state: queued\|running\|done\|failed, message}` |
 | `POST /api/store` | `{"id": "youtube", "action": "install" \| "remove"}` | `{ok: true}` (202), then poll `GET /api/store` |
 | `POST /api/power` | `{"action": "suspend" \| "reboot" \| "poweroff" \| "exit"}` | `{ok: true}` |

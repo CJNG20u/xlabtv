@@ -282,7 +282,7 @@ def make_remote_handler(pairing: Pairing, vinput: VirtualInput, library, launche
                 apps = [{"id": i, "name": a["name"], "color": a["color"],
                          "icon": f"/remote/icon/{i}" if a["media"].get("icon") else ""}
                         for i, a in cfg["apps"].items() if a.get("kind") != "media"]
-                return self._json(200, {"apps": apps, "running": launcher.status(),
+                return self._json(200, {"apps": apps, "running": launcher.front(), "open": launcher.open_apps(),
                                         "input": vinput.error is None, "wake": wake_info()})
             if path.startswith("/remote/icon/"):
                 # icons are not secret; they let the remote show app tiles
@@ -337,7 +337,7 @@ def make_remote_handler(pairing: Pairing, vinput: VirtualInput, library, launche
                 if path == "/remote/key":
                     name = str(body.get("key", ""))
                     if name == "home":
-                        launcher.stop()   # close the app in front: the launcher shows again
+                        launcher.stop()   # close the most recent app: the launcher shows again
                     else:
                         vinput.key(name)
                 elif path == "/remote/text":

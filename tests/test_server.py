@@ -127,10 +127,10 @@ class ServerTests(unittest.TestCase):
     def tearDown(self):
         self.httpd.shutdown()
         self.httpd.server_close()
-        proc = self.launcher._proc
-        if proc and proc.poll() is None:
-            proc.kill()
-            proc.wait()
+        for proc in self.launcher._procs.values():
+            if proc.poll() is None:
+                proc.kill()
+                proc.wait()
         self.tmp.cleanup()
 
     def request(self, method, path, body=None, token=TOKEN, host=None, headers=None):
@@ -179,16 +179,23 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.request("GET", "/media/sleeper/icon")[1], b"\x89PNG fake")
         self.assertEqual(self.request("GET", "/media/sleeper/secret")[0], 404)
 
-    def test_launch_status_and_double_launch(self):
+    def test_launch_status_and_several_apps(self):
+        clock = [100.0]
+        self.launcher.clock = lambda: clock[0]
         status, body = self.request("POST", "/api/launch", {"id": "sleeper"})
         self.assertEqual((status, json.loads(body)), (200, {"ok": True}))
-        self.assertEqual(json.loads(self.request("GET", "/api/status")[1]), {"running": "sleeper"})
-        status, body = self.request("POST", "/api/launch", {"id": "sleeper"})
-        self.assertEqual(status, 409)
-        self.launcher._proc.kill()
-        self.launcher._proc.wait()
-        time.sleep(0.05)
-        self.assertEqual(json.loads(self.request("GET", "/api/status")[1]), {"running": None})
+        self.assertEqual(json.loads(self.request("GET", "/api/status")[1]),
+                         {"running": "sleeper", "open": ["sleeper"]})
+        clock[0] += server.OPENING_SECONDS + 1   # "Opening…" is only for the first seconds
+        self.assertEqual(json.loads(self.request("GET", "/api/status")[1]),
+                         {"running": None, "open": ["sleeper"]})
+        first = self.launcher._procs["sleeper"]
+        # opening it again is fine: it is brought forward, not refused
+        self.assertEqual(self.request("POST", "/api/launch", {"id": "sleeper"})[0], 200)
+        self.assertIs(self.launcher._procs["sleeper"], first)
+        first.kill()
+        first.wait()
+        self.assertEqual(json.loads(self.request("GET", "/api/status")[1])["open"], [])
 
     def test_launch_errors(self):
         self.assertEqual(self.request("POST", "/api/launch", {"id": "nope"})[0], 404)
@@ -222,11 +229,19 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.request("POST", "/api/remote", {"action": "forget"})[0], 200)
         self.assertEqual(self.forgot, [True])
 
-    def test_stop_closes_the_running_app(self):
+    def test_close_endpoint(self):
+        self.assertEqual(self.request("POST", "/api/close", {"id": "sleeper"})[0], 404)
+        self.request("POST", "/api/launch", {"id": "sleeper"})
+        self.assertEqual(self.request("POST", "/api/close", {"id": "sleeper"})[0], 200)
+        self.assertEqual(self.launcher.open_apps(), [])
+
+    def test_stop_closes_the_most_recent_app(self):
         self.assertFalse(self.launcher.stop())
         self.request("POST", "/api/launch", {"id": "sleeper"})
+        self.assertEqual(self.launcher.front(), "sleeper")
         self.assertTrue(self.launcher.stop())
-        self.assertIsNone(self.launcher.status())
+        self.assertIsNone(self.launcher.front())
+        self.assertEqual(self.launcher.open_apps(), [])
 
     def test_bad_body(self):
         status, _ = self.request("POST", "/api/launch", None, headers={"Content-Length": "0"})
@@ -235,3 +250,33 @@ class ServerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MultiAppTests(unittest.TestCase):
+    def test_two_apps_and_a_preview(self):
+        sleep = [sys.executable, "-c", "import time; time.sleep(30)"]
+        quick = [sys.executable, "-c", "pass"]
+
+        class Lib:
+            def get(self):
+                return {"apps": {
+                    "a": {"name": "A", "command": sleep},
+                    "b": {"name": "B", "command": sleep},
+                    "cw-1": {"name": "Film", "command": quick, "parent": "b"},
+                }}
+        launcher = server.Launcher(Lib())
+        try:
+            launcher.launch("a")
+            launcher.launch("b")
+            self.assertEqual(launcher.open_apps(), ["a", "b"])
+            launcher.launch("a")                     # back to A: it becomes the front app
+            self.assertEqual(launcher.front(), "a")
+            launcher.launch("cw-1")                  # a preview counts as its app, B
+            self.assertEqual(launcher.open_apps(), ["a", "b"])
+            self.assertEqual(launcher.status(), "cw-1")
+            self.assertTrue(launcher.stop())         # Home closes the most recent: B
+            self.assertEqual(launcher.open_apps(), ["a"])
+        finally:
+            for p in launcher._procs.values():
+                p.kill()
+                p.wait()

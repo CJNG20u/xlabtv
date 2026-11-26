@@ -114,6 +114,12 @@ class FakeLauncher:
     def status(self):
         return None
 
+    def front(self):
+        return None
+
+    def open_apps(self):
+        return []
+
     def stop(self):
         self.stopped += 1
         return True
