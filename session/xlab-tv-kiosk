@@ -25,21 +25,41 @@ while ! python3 -c "import socket,sys; socket.create_connection(('127.0.0.1', $P
 done
 
 URL="http://127.0.0.1:$PORT/"
-if [ -n "${XLAB_TV_BROWSER:-}" ]; then
-    # shellcheck disable=SC2086
-    $XLAB_TV_BROWSER "$URL" &
+
+# Ubuntu's /usr/bin/firefox is only a wrapper for the snap, which may write only
+# under ~/snap/firefox/common: pick the profile folder by where Firefox really is.
+if [ -x /snap/bin/firefox ]; then
+    FIREFOX=/snap/bin/firefox
+    PROFILE=$HOME/snap/firefox/common/xlab-tv-profile
 else
-    # Firefox in kiosk mode with its own profile (Ubuntu's Firefox is a snap, which
-    # can only use profiles under ~/snap/firefox/common).
-    case "$(command -v firefox)" in
-        /snap/*) PROFILE=$HOME/snap/firefox/common/xlab-tv-profile ;;
-        *) PROFILE=$STATE/firefox-profile ;;
-    esac
+    FIREFOX=firefox
+    PROFILE=$STATE/firefox-profile
+fi
+
+start_browser() {
+    if [ -n "${XLAB_TV_BROWSER:-}" ]; then
+        # shellcheck disable=SC2086
+        $XLAB_TV_BROWSER "$URL"
+        return
+    fi
     mkdir -p "$PROFILE"
     cp -f "$PREFIX/session/user.js" "$PROFILE/user.js"
-    MOZ_ENABLE_WAYLAND=1 firefox --kiosk --no-remote --profile "$PROFILE" "$URL" &
-fi
-BROWSER=$!
+    # only this session uses the profile: clear a lock left by a crash
+    rm -f "$PROFILE/lock" "$PROFILE/.parentlock"
+    MOZ_ENABLE_WAYLAND=1 "$FIREFOX" --kiosk --no-remote --profile "$PROFILE" "$URL"
+}
+
+# Keep the launcher on screen: if the browser closes or crashes, start it again.
+(
+    while kill -0 "$SERVER" 2>/dev/null; do
+        start_browser >>"$STATE/browser.log" 2>&1
+        sleep 1
+    done
+) &
+LOOP=$!
 
 wait "$SERVER"
-kill "$BROWSER" 2>/dev/null
+pkill -P "$LOOP" 2>/dev/null
+kill "$LOOP" 2>/dev/null
+pkill -f -- "--profile $PROFILE" 2>/dev/null
+exit 0
