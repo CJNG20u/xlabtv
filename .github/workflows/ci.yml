@@ -18,7 +18,7 @@ jobs:
           sudo apt-get install -y -qq python3-gi gir1.2-gtk-4.0 gir1.2-webkit-6.0 xvfb >/dev/null
           python3 xlabtv/server.py --config apps.example.json --port 8765 &
           sleep 1
-          timeout 15 xvfb-run -a /usr/bin/python3 xlabtv/window.py http://127.0.0.1:8765/ ; code=$?
+          code=0; timeout 15 xvfb-run -a /usr/bin/python3 xlabtv/window.py http://127.0.0.1:8765/ || code=$?
           # still running after 15 s (exit 124) means it started and stayed up
           test "$code" -eq 124
   ui:
