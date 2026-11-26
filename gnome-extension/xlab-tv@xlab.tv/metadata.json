@@ -1,0 +1,8 @@
+{
+  "uuid": "xlab-tv@xlab.tv",
+  "name": "xLab TV",
+  "description": "Brings the xLab TV launcher to the front with the remote's Home button (F20, mapped by keyd) or over D-Bus, without closing the app that is playing.",
+  "shell-version": ["46", "47", "48", "49", "50"],
+  "settings-schema": "org.gnome.shell.extensions.xlab-tv",
+  "url": "https://github.com/CJNG20u/xlabtv"
+}

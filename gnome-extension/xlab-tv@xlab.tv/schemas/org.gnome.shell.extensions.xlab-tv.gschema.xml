@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.xlab-tv" path="/org/gnome/shell/extensions/xlab-tv/">
+    <key name="show-launcher" type="as">
+      <!-- keyd turns the remote's Home key into F20, which nothing else uses -->
+      <default>['F20']</default>
+      <summary>Keys that bring xLab TV to the front</summary>
+    </key>
+  </schema>
+</schemalist>

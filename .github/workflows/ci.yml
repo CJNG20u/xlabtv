@@ -17,6 +17,11 @@ jobs:
           install -m 0644 xlabtv/*.py xlabtv/*.json xlabtv/*.html "$d/"
           cd / && python3 "$d/server.py" --config "$GITHUB_WORKSPACE/apps.example.json" --check
       - run: sh -n install.sh && sh -n session/xlab-tv-kiosk
+      - name: GNOME extension is well-formed
+        run: |
+          python3 -c "import json; m = json.load(open('gnome-extension/xlab-tv@xlab.tv/metadata.json')); assert m['uuid'] == 'xlab-tv@xlab.tv'"
+          glib-compile-schemas --strict --dry-run gnome-extension/xlab-tv@xlab.tv/schemas
+          node --check gnome-extension/xlab-tv@xlab.tv/extension.js
       - name: Phone remote creates its virtual keyboard and mouse
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq python3-evdev >/dev/null

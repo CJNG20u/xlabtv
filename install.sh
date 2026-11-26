@@ -72,6 +72,44 @@ if command -v nmcli >/dev/null 2>&1; then
     done
 fi
 
+# Remote buttons: Back -> Esc, Home -> F20 (keyd), and the GNOME extension that makes
+# F20 (and the phone remote's Home) bring xLab TV forward without closing the app.
+echo "==> Remote buttons (keyd) and the xLab TV GNOME extension"
+sudo apt-get install -y keyd >/dev/null
+if ls /etc/keyd/*.conf 2>/dev/null | grep -qv '/xlab-tv.conf$'; then
+    echo "    keyd already has your own config; add these lines to it yourself:"
+    sed -n '/^\[main\]/,$p' session/keyd-xlab-tv.conf | sed 's/^/      /'
+else
+    sudo install -Dm 0644 session/keyd-xlab-tv.conf /etc/keyd/xlab-tv.conf
+fi
+sudo systemctl enable keyd >/dev/null 2>&1 || true
+sudo systemctl restart keyd || true
+
+EXT_UUID=xlab-tv@xlab.tv
+EXT_DIR=${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell/extensions/$EXT_UUID
+rm -rf "$EXT_DIR"
+mkdir -p "$EXT_DIR"
+cp -r "gnome-extension/$EXT_UUID/." "$EXT_DIR/"
+glib-compile-schemas "$EXT_DIR/schemas"
+# GNOME loads a new extension at the next login; turn it on for then (and now, if it can).
+python3 - "$EXT_UUID" <<'PYEOF'
+import ast, subprocess, sys
+uuid = sys.argv[1]
+def get(key):
+    out = subprocess.run(["gsettings", "get", "org.gnome.shell", key], capture_output=True, text=True).stdout
+    out = out.strip().replace("@as ", "")
+    return ast.literal_eval(out) if out else []
+enabled = get("enabled-extensions")
+if uuid not in enabled:
+    subprocess.run(["gsettings", "set", "org.gnome.shell", "enabled-extensions", str(enabled + [uuid])])
+disabled = get("disabled-extensions")
+if uuid in disabled:
+    subprocess.run(["gsettings", "set", "org.gnome.shell", "disabled-extensions",
+                    str([d for d in disabled if d != uuid])])
+PYEOF
+gsettings set org.gnome.shell disable-user-extensions false
+gnome-extensions enable "$EXT_UUID" 2>/dev/null || true
+
 # Earlier versions added a cage login session, which crashes with Firefox: remove it.
 sudo rm -f /usr/share/wayland-sessions/xlab-tv.desktop
 ACCT=/var/lib/AccountsService/users/$USER_NAME

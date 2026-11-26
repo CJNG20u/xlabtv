@@ -374,6 +374,17 @@ class Launcher:
         return True
 
 
+def show_launcher(run=subprocess.run) -> bool:
+    """Bring the launcher window forward through the xLab TV GNOME extension."""
+    try:
+        out = run(["gdbus", "call", "--session", "--dest", "org.gnome.Shell",
+                   "--object-path", "/tv/xlab/Shell", "--method", "tv.xlab.Shell.ShowLauncher"],
+                  capture_output=True, text=True, timeout=3)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return out.returncode == 0 and "true" in out.stdout
+
+
 def make_handler(library, launcher: Launcher, ui_dir: Path | None, token: str, port_ref: list,
                  on_exit=None, run=subprocess.Popen, store=None, remote=None):
 
@@ -560,7 +571,8 @@ def start_remote(port: int, library, launcher, ui_dir):
     vinput = remote_mod.VirtualInput()
     threading.Thread(target=vinput.warm, daemon=True).start()
     handler = remote_mod.make_remote_handler(pairing, vinput, library, launcher,
-                                             HERE / "remote.html", ui_dir, run_power_action)
+                                             HERE / "remote.html", ui_dir, run_power_action,
+                                             go_home=show_launcher)
     try:
         httpd = ThreadingHTTPServer(("0.0.0.0", port), handler)
     except OSError as exc:

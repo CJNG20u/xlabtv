@@ -280,3 +280,15 @@ class MultiAppTests(unittest.TestCase):
             for p in launcher._procs.values():
                 p.kill()
                 p.wait()
+
+
+class ShowLauncherTests(unittest.TestCase):
+    def test_gdbus_answer(self):
+        import subprocess
+        ok = lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "(true,)\n", "")
+        missing = lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, "", "No such interface")
+        def no_gdbus(cmd, **kw):
+            raise FileNotFoundError("gdbus")
+        self.assertTrue(server.show_launcher(ok))
+        self.assertFalse(server.show_launcher(missing))
+        self.assertFalse(server.show_launcher(no_gdbus))

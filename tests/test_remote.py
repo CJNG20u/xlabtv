@@ -171,6 +171,24 @@ class RemoteServerTests(unittest.TestCase):
         self.assertEqual(status, 200)
         return data["token"]
 
+    def test_home_shows_launcher_and_keeps_the_app(self):
+        calls = []
+        page = Path(__file__).resolve().parents[1] / "xlabtv" / "remote.html"
+        handler = remote.make_remote_handler(self.pairing, remote.VirtualInput(lambda: self.fake), self.library,
+                                             self.launcher, page, None, self.power.append,
+                                             go_home=lambda: calls.append(1) or True)
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        try:
+            port, self.port = self.port, httpd.server_address[1]
+            t = self.paired_token()
+            self.assertEqual(self.call("POST", "/remote/key", {"key": "home"}, t)[0], 200)
+            self.assertEqual((calls, self.launcher.stopped), ([1], 0))  # shown, nothing closed
+            self.port = port
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
     def test_page_has_no_launcher_token(self):
         status, body = self.call("GET", "/remote")
         self.assertEqual(status, 200)

@@ -248,7 +248,7 @@ def wake_info(sys_net: Path = Path("/sys/class/net"), route: Path = Path("/proc/
 
 
 def make_remote_handler(pairing: Pairing, vinput: VirtualInput, library, launcher, page: Path,
-                        ui_dir: Path | None = None, run_power=None):
+                        ui_dir: Path | None = None, run_power=None, go_home=None):
     """Handler for the home-network server. It never serves the launcher's own token."""
 
     class Handler(BaseHTTPRequestHandler):
@@ -337,7 +337,10 @@ def make_remote_handler(pairing: Pairing, vinput: VirtualInput, library, launche
                 if path == "/remote/key":
                     name = str(body.get("key", ""))
                     if name == "home":
-                        launcher.stop()   # close the most recent app: the launcher shows again
+                        # Show the launcher and leave the app running (GNOME extension); without
+                        # the extension, close the most recent app so the launcher shows again.
+                        if go_home is None or not go_home():
+                            launcher.stop()
                     else:
                         vinput.key(name)
                 elif path == "/remote/text":

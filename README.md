@@ -88,6 +88,20 @@ In `/api/apps`, an app item with content has `previews`: a list of hero items
 (`id, title, subtitle, backdrop, backdropFallback, eyebrow, logo, progress?, kind: "media"`);
 launch one with `POST /api/launch {"id": <preview id>}`.
 
+## Remote buttons and the Home button
+
+Several apps can be open at once. **Home** brings xLab TV to the front and leaves the app
+running, like a TV box:
+
+- `install.sh` installs **keyd** with `/etc/keyd/xlab-tv.conf`: a remote's **Back** key
+  becomes **Esc** (which every app understands) and its **Home** key becomes **F20**.
+  If you already have a keyd config, it prints the two lines to add instead.
+- It also installs the **xLab TV GNOME extension** (`gnome-extension/xlab-tv@xlab.tv`), which
+  turns F20 into "show the launcher" and offers the same over D-Bus:
+  `gdbus call --session --dest org.gnome.Shell --object-path /tv/xlab/Shell --method tv.xlab.Shell.ShowLauncher`.
+  GNOME loads it at the next login.
+- The phone remote's Home uses the extension too; without it, Home closes the most recent app.
+
 ## Phone remote
 
 The service also serves a remote for your phone on the home network
