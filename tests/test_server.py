@@ -332,3 +332,66 @@ class ShowLauncherTests(unittest.TestCase):
         self.assertTrue(server.show_launcher(ok))
         self.assertFalse(server.show_launcher(missing))
         self.assertFalse(server.show_launcher(no_gdbus))
+
+
+class ActivateTests(unittest.TestCase):
+    def test_process_tree_from_proc(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = Path(tmp)
+            for pid, name, ppid in [(10, "flatpak", 1), (11, "bwrap", 10), (12, "vacuum tube (main)", 11),
+                                    (13, "zygote", 12), (20, "other", 1)]:
+                (proc / str(pid)).mkdir()
+                (proc / str(pid) / "stat").write_text(f"{pid} ({name}) S {ppid} 0 0 0")
+            (proc / "self").mkdir()
+            self.assertEqual(sorted(server.process_tree(10, proc)), [10, 11, 12, 13])
+            self.assertEqual(server.process_tree(20, proc), [20])
+
+    def test_activate_pids_call(self):
+        import subprocess
+        seen = []
+
+        def run(cmd, **kw):
+            seen.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, "(true,)\\n", "")
+        self.assertTrue(server.activate_pids([5, 6], run))
+        self.assertEqual(seen[0][-2:], ["tv.xlab.Shell.ActivatePids", "@au [5, 6]"])
+        self.assertFalse(server.activate_pids([], run))
+
+    def test_open_app_is_brought_back_not_restarted(self):
+        sleep = [sys.executable, "-c", "import time; time.sleep(30)"]
+        quick = [sys.executable, "-c", "pass"]
+
+        class Lib:
+            def get(self):
+                return {"apps": {"yt": {"name": "YouTube", "command": sleep},
+                                 "yt-1": {"name": "Video", "command": quick, "parent": "yt"}}}
+        activated = []
+        answer = [True]
+
+        def activate(pids):
+            activated.append(pids)
+            return answer[0]
+        launcher = server.Launcher(Lib(), activate=activate)
+        try:
+            launcher.launch("yt")
+            first = launcher._procs["yt"]
+            self.assertEqual(activated, [])            # first start: nothing to bring back
+            launcher.launch("yt")                      # already open: brought back
+            self.assertEqual(len(activated), 1)
+            self.assertIn(first.pid, activated[0])
+            self.assertIsNone(launcher.status())       # no "Opening…" for an app that's already up
+            self.assertIs(launcher._procs["yt"], first)
+
+            answer[0] = False                          # e.g. no extension: start it again
+            launcher.launch("yt")
+            self.assertEqual(launcher.status(), "yt")
+
+            launcher.launch("yt-1")                    # a preview: handed over, then shown
+            import time
+            time.sleep(1.3)
+            self.assertGreaterEqual(len(activated), 3)
+            self.assertEqual(launcher.status(), "yt-1")
+        finally:
+            for p in launcher._procs.values():
+                p.kill()
+                p.wait()

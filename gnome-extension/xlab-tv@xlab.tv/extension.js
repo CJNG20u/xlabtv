@@ -5,6 +5,8 @@
 //     gdbus call --session --dest org.gnome.Shell --object-path /tv/xlab/Shell \
 //         --method tv.xlab.Shell.ShowLauncher
 //   returns true when the launcher window was found.
+// - ActivatePids(au): brings forward the window of an app that is already open, found by
+//   the process ids of that app (GNOME doesn't let an app raise itself on Wayland).
 import Meta from 'gi://Meta';
 import Shell from 'gi://Shell';
 import Gio from 'gi://Gio';
@@ -16,6 +18,10 @@ const IFACE = `
 <node>
   <interface name="tv.xlab.Shell">
     <method name="ShowLauncher">
+      <arg type="b" direction="out" name="found"/>
+    </method>
+    <method name="ActivatePids">
+      <arg type="au" direction="in" name="pids"/>
       <arg type="b" direction="out" name="found"/>
     </method>
   </interface>
@@ -51,7 +57,19 @@ export default class XlabTvExtension extends Extension {
     }
 
     ShowLauncher() {
-        const win = allWindows().find(isLauncher);
+        return this._activate(allWindows().find(isLauncher));
+    }
+
+    ActivatePids(pids) {
+        const wanted = new Set(pids);
+        // newest first: the window the user saw last for that app
+        const win = allWindows()
+            .filter(w => !isLauncher(w) && wanted.has(w.get_pid()))
+            .sort((a, b) => b.get_user_time() - a.get_user_time())[0];
+        return this._activate(win);
+    }
+
+    _activate(win) {
         if (!win)
             return false;
         if (Main.overview.visible)

@@ -347,6 +347,42 @@ def api_apps(config: dict) -> dict:
     }
 
 
+def process_tree(root: int, proc_dir: Path = Path("/proc")) -> list[int]:
+    """root and all its descendants (an app's helpers, a Flatpak's sandboxed process)."""
+    children: dict[int, list[int]] = {}
+    for entry in proc_dir.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            stat = (entry / "stat").read_text()
+        except OSError:
+            continue
+        # "pid (name) state ppid ...": the name may contain spaces or parentheses
+        fields = stat[stat.rfind(")") + 2:].split()
+        if len(fields) > 1 and fields[1].isdigit():
+            children.setdefault(int(fields[1]), []).append(int(entry.name))
+    found, todo = [], [root]
+    while todo:
+        pid = todo.pop()
+        found.append(pid)
+        todo.extend(children.get(pid, []))
+    return found
+
+
+def activate_pids(pids: list[int], run=subprocess.run) -> bool:
+    """Bring forward the window owned by one of these processes (xLab TV GNOME extension)."""
+    if not pids:
+        return False
+    try:
+        out = run(["gdbus", "call", "--session", "--dest", "org.gnome.Shell",
+                   "--object-path", "/tv/xlab/Shell", "--method", "tv.xlab.Shell.ActivatePids",
+                   "@au [" + ", ".join(str(int(p)) for p in pids) + "]"],
+                  capture_output=True, text=True, timeout=3)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return out.returncode == 0 and "true" in out.stdout
+
+
 OPENING_SECONDS = 8  # how long the UI may show "Opening…" after a launch
 
 
@@ -355,10 +391,12 @@ class Launcher:
     command again, which brings it forward for single-instance apps (Nuvio, browsers, most
     Flatpaks); previews (a Nuvio title, a YouTube video) go to their app the same way."""
 
-    def __init__(self, library, log_path: Path | None = None, clock=time.monotonic):
+    def __init__(self, library, log_path: Path | None = None, clock=time.monotonic, activate=None):
         self.library = library
         self.log_path = log_path
         self.clock = clock
+        # brings an open app's window forward; None = can't (no GNOME extension)
+        self.activate = activate
         self._lock = threading.Lock()
         self._procs: dict[str, subprocess.Popen] = {}   # app id -> first process started for it
         self._order: list[str] = []                     # most recently opened last
@@ -395,6 +433,21 @@ class Launcher:
         if app is None:
             raise KeyError(app_id)
         owner = app.get("parent", app_id)  # a preview belongs to its app
+        with self._lock:
+            self._prune()
+            running = self._procs.get(owner)
+        if running is not None and self.activate is not None:
+            pids = process_tree(running.pid)
+            if owner == app_id:
+                # the app itself is already open: just bring its window back
+                if self.activate(pids):
+                    with self._lock:
+                        self._order = [a for a in self._order if a != owner] + [owner]
+                        self._opening = None
+                    return
+            else:
+                # a preview of an open app: hand it over (below), then show that app's window
+                threading.Timer(1.0, self.activate, args=(pids,)).start()
         log = open(self.log_path, "ab") if self.log_path else subprocess.DEVNULL
         try:
             proc = subprocess.Popen(
@@ -730,7 +783,7 @@ def main(argv=None) -> int:
 
     token = secrets.token_urlsafe(24)
     port_ref = [args.port]
-    launcher = Launcher(library, args.log)
+    launcher = Launcher(library, args.log, activate=activate_pids)
     httpd: ThreadingHTTPServer
 
     def stop():
