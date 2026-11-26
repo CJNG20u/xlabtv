@@ -6,5 +6,14 @@
       <default>['F20']</default>
       <summary>Keys that bring xLab TV to the front</summary>
     </key>
+    <key name="pause-on-home" type="b">
+      <default>true</default>
+      <summary>Pause playing video when Home brings xLab TV to the front</summary>
+    </key>
+    <key name="keep-playing" type="as">
+      <!-- media players (by MPRIS name) left playing on Home: music, like Google TV -->
+      <default>['spotify', 'plexamp', 'tidal', 'shortwave', 'ytmdesktop', 'youtube-music']</default>
+      <summary>Players that keep playing on Home</summary>
+    </key>
   </schema>
 </schemalist>

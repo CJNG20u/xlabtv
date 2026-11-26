@@ -114,6 +114,10 @@ running, like a TV box:
   `gdbus call --session --dest org.gnome.Shell --object-path /tv/xlab/Shell --method tv.xlab.Shell.ShowLauncher`.
   GNOME loads it at the next login.
 - The phone remote's Home uses the extension too; without it, Home closes the most recent app.
+- Home pauses video that is playing (any MPRIS player: Nuvio, VLC, mpv, Kodi, VacuumTube and
+  other Chromium-based apps), while music players keep playing. Change it with
+  `gsettings --schemadir ~/.local/share/gnome-shell/extensions/xlab-tv@xlab.tv/schemas set org.gnome.shell.extensions.xlab-tv pause-on-home false`
+  or the `keep-playing` list (MPRIS names, e.g. `['spotify', 'plexamp']`).
 
 ## Phone remote
 

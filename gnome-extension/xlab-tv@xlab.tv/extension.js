@@ -4,12 +4,15 @@
 // - D-Bus, for the phone remote and scripts:
 //     gdbus call --session --dest org.gnome.Shell --object-path /tv/xlab/Shell \
 //         --method tv.xlab.Shell.ShowLauncher
-//   returns true when the launcher window was found.
+//   returns true when the launcher window was found. Video that is playing is paused first
+//   (any MPRIS player, e.g. Nuvio, VLC, mpv, Kodi, VacuumTube); music players listed in the
+//   keep-playing setting go on playing.
 // - ActivatePids(au): brings forward the window of an app that is already open, found by
 //   the process ids of that app (GNOME doesn't let an app raise itself on Wayland).
 import Meta from 'gi://Meta';
 import Shell from 'gi://Shell';
 import Gio from 'gi://Gio';
+import GLib from 'gi://GLib';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
@@ -57,7 +60,46 @@ export default class XlabTvExtension extends Extension {
     }
 
     ShowLauncher() {
-        return this._activate(allWindows().find(isLauncher));
+        const launcher = allWindows().find(isLauncher);
+        if (launcher)
+            this._pausePlayers();
+        return this._activate(launcher);
+    }
+
+    _pausePlayers() {
+        if (!this._settings?.get_boolean('pause-on-home'))
+            return;
+        const keep = this._settings.get_strv('keep-playing').map(k => k.toLowerCase());
+        const prefix = 'org.mpris.MediaPlayer2.';
+        Gio.DBus.session.call(
+            'org.freedesktop.DBus', '/org/freedesktop/DBus', 'org.freedesktop.DBus', 'ListNames',
+            null, new GLib.VariantType('(as)'), Gio.DBusCallFlags.NONE, -1, null,
+            (conn, res) => {
+                let names;
+                try {
+                    [names] = conn.call_finish(res).deepUnpack();
+                } catch (e) {
+                    return;
+                }
+                for (const name of names) {
+                    if (!name.startsWith(prefix))
+                        continue;
+                    const player = name.slice(prefix.length).toLowerCase();
+                    if (keep.some(k => player.includes(k)))
+                        continue;
+                    // Pause is harmless for a player that is already paused or stopped.
+                    conn.call(
+                        name, '/org/mpris/MediaPlayer2', 'org.mpris.MediaPlayer2.Player', 'Pause',
+                        null, null, Gio.DBusCallFlags.NO_AUTO_START, 2000, null,
+                        (c, r) => {
+                            try {
+                                c.call_finish(r);
+                            } catch (e) {
+                                // a player without Pause, or one that just closed
+                            }
+                        });
+                }
+            });
     }
 
     ActivatePids(pids) {
