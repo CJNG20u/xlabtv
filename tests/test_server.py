@@ -395,3 +395,21 @@ class ActivateTests(unittest.TestCase):
             for p in launcher._procs.values():
                 p.kill()
                 p.wait()
+
+
+class LibraryRefreshTests(unittest.TestCase):
+    def test_invalidate_works_right_after_boot(self):
+        import time as _time
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "apps.json"
+            path.write_text(json.dumps({"apps": {"a": {"command": ["a"]}}}))
+            lib = server.Library(path, detect=lambda: {})
+            real = _time.monotonic
+            server.time.monotonic = lambda: 5.0   # five seconds after boot
+            try:
+                self.assertEqual(list(lib.get()["apps"]), ["a"])
+                path.write_text(json.dumps({"apps": {"b": {"command": ["b"]}}}))
+                lib.invalidate()
+                self.assertEqual(list(lib.get()["apps"]), ["b"])
+            finally:
+                server.time.monotonic = real

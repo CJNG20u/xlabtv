@@ -269,16 +269,19 @@ class Library:
         self._lock = threading.Lock()
         self._config: dict | None = None
         self._at = 0.0
+        self._stale = True
         self.detected: dict = {}
 
     def invalidate(self) -> None:
+        # a flag, not a timestamp: time.monotonic() counts from boot, so "long ago"
+        # isn't reliably older than the TTL in the first seconds after a box starts
         with self._lock:
-            self._at = 0.0
+            self._stale = True
 
     def get(self) -> dict:
         with self._lock:
             now = time.monotonic()
-            if self._config is None or now - self._at > self.ttl:
+            if self._config is None or self._stale or now - self._at > self.ttl:
                 rows = self.catalog.get("rows") if self.catalog else None
                 try:
                     self.detected = self.detect()
@@ -289,6 +292,7 @@ class Library:
                         raise
                     print(f"xlab-tv: {exc} (keeping the previous app list)", file=sys.stderr)
                 self._at = now
+                self._stale = False
             return self._config
 
 
