@@ -16,12 +16,12 @@ fi
 
 echo "==> Installing packages"
 sudo apt-get update -qq
-sudo apt-get install -y python3 python3-gi gir1.2-gtk-4.0 gir1.2-webkit-6.0 flatpak
+sudo apt-get install -y python3 python3-gi gir1.2-gtk-4.0 gir1.2-webkit-6.0 flatpak python3-evdev
 
 echo "==> Copying xLab TV to $PREFIX"
 sudo mkdir -p "$PREFIX/xlabtv" "$PREFIX/session" "$PREFIX/ui"
 sudo install -m 0644 xlabtv/server.py xlabtv/apps.py xlabtv/catalog.json xlabtv/window.py \
-    xlabtv/fallback.html "$PREFIX/xlabtv/"
+    xlabtv/remote.py xlabtv/remote.html xlabtv/fallback.html "$PREFIX/xlabtv/"
 # "xlab-tv-apps list" / "xlab-tv-apps install youtube spotify"
 printf '#!/bin/sh\nexec python3 %s/xlabtv/apps.py "$@"\n' "$PREFIX" | sudo tee /usr/local/bin/xlab-tv-apps >/dev/null
 sudo chmod 0755 /usr/local/bin/xlab-tv-apps
@@ -41,6 +41,19 @@ fi
 if [ -f dist/index.html ]; then
     sudo rm -rf "$PREFIX/ui/dist"
     sudo cp -r dist "$PREFIX/ui/dist"
+fi
+
+# Phone remote: let the logged-in user create the virtual keyboard and mouse
+# (the same rule Steam uses for its controller support), and load uinput at boot.
+echo "==> Allowing the phone remote's virtual keyboard"
+echo 'KERNEL=="uinput", SUBSYSTEM=="misc", OPTIONS+="static_node=uinput", TAG+="uaccess"' |
+    sudo tee /etc/udev/rules.d/60-xlab-tv-uinput.rules >/dev/null
+echo uinput | sudo tee /etc/modules-load.d/xlab-tv-uinput.conf >/dev/null
+sudo modprobe uinput
+sudo udevadm control --reload-rules
+sudo udevadm trigger --name-match=uinput
+if command -v ufw >/dev/null 2>&1 && sudo ufw status | grep -q "Status: active"; then
+    sudo ufw allow 8766/tcp comment "xLab TV phone remote" >/dev/null
 fi
 
 # Earlier versions added a cage login session, which crashes with Firefox: remove it.

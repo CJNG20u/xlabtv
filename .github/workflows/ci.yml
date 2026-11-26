@@ -12,6 +12,16 @@ jobs:
       - run: python3 -m unittest discover -s tests -v
       - run: python3 xlabtv/server.py --config apps.example.json --check
       - run: sh -n install.sh && sh -n session/xlab-tv-kiosk
+      - name: Phone remote creates its virtual keyboard and mouse
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq python3-evdev >/dev/null
+          sudo modprobe uinput
+          cd xlabtv && sudo /usr/bin/python3 -c "
+          import remote
+          b = remote._evdev_backend()
+          b.tap('KEY_A'); b.tap('KEY_1', True); b.move(5, -5); b.click('left'); b.scroll(1)
+          for k in remote.KEYS.values(): b.tap(k)
+          print('virtual input ok')"
       - name: Window opens the launcher page
         run: |
           sudo apt-get update -qq

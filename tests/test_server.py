@@ -108,8 +108,18 @@ class ServerTests(unittest.TestCase):
             self.store_run.append(cmd)
             return subprocess.CompletedProcess(cmd, 0, "", "")
         self.store = apps.Store(apps.load_catalog(), self.dir / "icons", run=store_run, fetch=lambda u: b"")
+        self.forgot = []
+        test = self
+
+        class FakeRemote:
+            def info(self):
+                return {"code": "123456", "url": "http://192.168.1.5:8766/remote"}
+
+            def forget(self):
+                test.forgot.append(True)
         handler = server.make_handler(self.library, self.launcher, ui, TOKEN, port_ref,
-                                      run=lambda cmd, **kw: self.power_calls.append(cmd), store=self.store)
+                                      run=lambda cmd, **kw: self.power_calls.append(cmd), store=self.store,
+                                      remote=FakeRemote())
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         port_ref[0] = self.port = self.httpd.server_address[1]
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
@@ -204,6 +214,19 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.store_run[-1][-1], "rocks.shy.VacuumTube")
         self.assertEqual(self.request("POST", "/api/store", {"id": "nope", "action": "install"})[0], 404)
         self.assertEqual(self.request("POST", "/api/store", {"id": "kodi"}, token=None)[0], 401)
+
+    def test_remote_pairing_info(self):
+        status, body = self.request("GET", "/api/remote")
+        self.assertEqual((status, json.loads(body)["code"]), (200, "123456"))
+        self.assertEqual(self.request("GET", "/api/remote", token=None)[0], 401)
+        self.assertEqual(self.request("POST", "/api/remote", {"action": "forget"})[0], 200)
+        self.assertEqual(self.forgot, [True])
+
+    def test_stop_closes_the_running_app(self):
+        self.assertFalse(self.launcher.stop())
+        self.request("POST", "/api/launch", {"id": "sleeper"})
+        self.assertTrue(self.launcher.stop())
+        self.assertIsNone(self.launcher.status())
 
     def test_bad_body(self):
         status, _ = self.request("POST", "/api/launch", None, headers={"Content-Length": "0"})

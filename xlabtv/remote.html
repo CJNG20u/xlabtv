@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#090b10">
+<meta name="mobile-web-app-capable" content="yes">
+<title>xLab TV Remote</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: #090b10; color: #f1f5f9; font: 500 16px/1.3 system-ui, sans-serif;
+    user-select: none; -webkit-user-select: none; touch-action: manipulation; }
+  main { max-width: 420px; margin: 0 auto; padding: 18px 18px 40px; }
+  h1 { font-size: 20px; margin: 4px 0 18px; display: flex; justify-content: space-between; align-items: center; }
+  h1 small { font-size: 13px; color: #94a3b8; font-weight: 500; }
+  button { font: inherit; color: inherit; background: #161b26; border: 1px solid #232a38; border-radius: 16px;
+    padding: 14px; cursor: pointer; }
+  button:active { background: #263044; transform: scale(.97); }
+  .row { display: flex; gap: 10px; margin: 12px 0; }
+  .row > * { flex: 1; }
+  .pad { position: relative; width: 260px; height: 260px; margin: 18px auto; border-radius: 50%;
+    background: #121722; border: 1px solid #232a38; }
+  .pad button { position: absolute; width: 84px; height: 84px; border: 0; background: transparent; font-size: 26px; border-radius: 50%; }
+  .pad .up { top: 4px; left: 88px; } .pad .down { bottom: 4px; left: 88px; }
+  .pad .left { left: 4px; top: 88px; } .pad .right { right: 4px; top: 88px; }
+  .pad .ok { top: 80px; left: 80px; width: 100px; height: 100px; background: #1e293b; border: 1px solid #334155;
+    font-size: 18px; font-weight: 700; }
+  #touch { height: 260px; margin: 18px 0; border-radius: 20px; background: #121722; border: 1px dashed #334155;
+    display: none; align-items: center; justify-content: center; color: #64748b; touch-action: none; }
+  .tabs { display: flex; gap: 8px; }
+  .tabs button { flex: 1; padding: 10px; font-size: 14px; }
+  .tabs button.on { background: #0c4a6e; border-color: #0284c7; }
+  input { width: 100%; font: inherit; padding: 14px; border-radius: 14px; border: 1px solid #334155;
+    background: #121722; color: #f1f5f9; }
+  .apps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 10px; }
+  .apps button { padding: 0; aspect-ratio: 1; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 6px; font-size: 11px; overflow: hidden; }
+  .apps img { width: 40px; height: 40px; }
+  h2 { font-size: 13px; color: #94a3b8; text-transform: uppercase; letter-spacing: .08em; margin: 26px 0 6px; }
+  #pair { text-align: center; padding-top: 30px; }
+  #pair input { text-align: center; font-size: 30px; letter-spacing: .3em; margin: 18px 0; }
+  #msg { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: #7f1d1d;
+    padding: 10px 16px; border-radius: 12px; display: none; max-width: 90%; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <section id="pair" class="hidden">
+    <h1 style="justify-content:center">xLab TV Remote</h1>
+    <p>On the TV, open Settings › Phone remote and enter the code shown there, or scan its QR code.</p>
+    <input id="code" inputmode="numeric" maxlength="6" placeholder="000000" autocomplete="one-time-code">
+    <button id="pairBtn" style="width:100%">Pair</button>
+  </section>
+
+  <section id="remote" class="hidden">
+    <h1>xLab TV <small id="now"></small></h1>
+    <div class="tabs"><button id="tPad" class="on">Buttons</button><button id="tTouch">Touchpad</button></div>
+    <div class="pad" id="pad">
+      <button class="up" data-key="up">▲</button><button class="down" data-key="down">▼</button>
+      <button class="left" data-key="left">◀</button><button class="right" data-key="right">▶</button>
+      <button class="ok" data-key="ok">OK</button>
+    </div>
+    <div id="touch">Drag to move · tap to click · hold for right-click</div>
+    <div class="row">
+      <button data-key="back">↩ Back</button><button data-key="home">⌂ Home</button><button data-key="playpause">⏯</button>
+    </div>
+    <div class="row">
+      <button data-key="voldown">🔉</button><button data-key="mute">🔇</button><button data-key="volup">🔊</button>
+    </div>
+    <h2>Type</h2>
+    <div class="row"><input id="text" placeholder="Type on the TV…" enterkeyhint="send"><button id="send" style="flex:0 0 80px">Send</button></div>
+    <div class="row"><button data-key="backspace">⌫ Delete</button><button data-key="ok">⏎ Enter</button></div>
+    <h2>Apps</h2>
+    <div class="apps" id="apps"></div>
+    <h2>Power</h2>
+    <div class="row"><button data-power="suspend">Sleep</button><button data-power="reboot">Restart</button><button data-power="poweroff">Off</button></div>
+  </section>
+</main>
+<div id="msg"></div>
+<script>
+const $ = id => document.getElementById(id);
+let token = localStorage.getItem('xlabRemoteToken') || '';
+const buzz = () => navigator.vibrate && navigator.vibrate(12);
+
+function say(text) {
+  const m = $('msg'); m.textContent = text; m.style.display = 'block';
+  clearTimeout(say.t); say.t = setTimeout(() => m.style.display = 'none', 3000);
+}
+async function post(path, body) {
+  const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Remote-Token': token },
+    body: JSON.stringify(body) }).catch(() => null);
+  if (!r) { say('Cannot reach the TV'); return null; }
+  const data = await r.json().catch(() => ({}));
+  if (r.status === 401) { token = ''; localStorage.removeItem('xlabRemoteToken'); show(); return null; }
+  if (!data.ok) say(data.error || 'Failed');
+  return data;
+}
+
+function show() {
+  $('pair').classList.toggle('hidden', !!token);
+  $('remote').classList.toggle('hidden', !token);
+  if (token) loadApps();
+}
+
+async function pair(code) {
+  const r = await fetch('/remote/pair', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, name: navigator.userAgent.includes('Android') ? 'Android phone' : 'Phone' }) });
+  const data = await r.json().catch(() => ({}));
+  if (data.ok) { token = data.token; localStorage.setItem('xlabRemoteToken', token); history.replaceState(null, '', '/remote'); show(); }
+  else say(data.error || 'Pairing failed');
+}
+$('pairBtn').onclick = () => pair($('code').value.trim());
+const fromQr = location.hash.match(/pair=(\d{6})/);
+if (fromQr && !token) pair(fromQr[1]);
+
+// Buttons; the D-pad repeats while held.
+document.querySelectorAll('[data-key]').forEach(b => {
+  const key = b.dataset.key, repeat = ['up', 'down', 'left', 'right', 'volup', 'voldown', 'backspace'].includes(key);
+  let timer;
+  const stop = () => clearInterval(timer);
+  b.addEventListener('pointerdown', e => {
+    e.preventDefault(); buzz(); post('/remote/key', { key });
+    if (repeat) { stop(); timer = setInterval(() => post('/remote/key', { key }), 180); setTimeout(() => {}, 0); }
+  });
+  ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => b.addEventListener(ev, stop));
+});
+document.querySelectorAll('[data-power]').forEach(b => b.onclick = () => {
+  if (confirm(`${b.textContent} the TV?`)) post('/remote/power', { action: b.dataset.power });
+});
+
+function sendText() { const t = $('text').value; if (t) { post('/remote/text', { text: t }); $('text').value = ''; } }
+$('send').onclick = sendText;
+$('text').addEventListener('keydown', e => { if (e.key === 'Enter') sendText(); });
+
+// Touchpad: moves are batched every 30 ms.
+$('tPad').onclick = () => { $('tPad').classList.add('on'); $('tTouch').classList.remove('on'); $('pad').style.display = ''; $('touch').style.display = 'none'; };
+$('tTouch').onclick = () => { $('tTouch').classList.add('on'); $('tPad').classList.remove('on'); $('pad').style.display = 'none'; $('touch').style.display = 'flex'; };
+let last = null, acc = [0, 0], downAt = 0, moved = 0, holdTimer;
+const tp = $('touch');
+tp.addEventListener('pointerdown', e => {
+  last = [e.clientX, e.clientY]; downAt = Date.now(); moved = 0; tp.setPointerCapture(e.pointerId);
+  holdTimer = setTimeout(() => { if (moved < 8) { buzz(); post('/remote/mouse', { click: 'right' }); last = null; } }, 600);
+});
+tp.addEventListener('pointermove', e => {
+  if (!last) return;
+  const dx = e.clientX - last[0], dy = e.clientY - last[1];
+  acc[0] += dx * 2; acc[1] += dy * 2; moved += Math.abs(dx) + Math.abs(dy); last = [e.clientX, e.clientY];
+});
+tp.addEventListener('pointerup', () => {
+  clearTimeout(holdTimer);
+  if (last && moved < 8 && Date.now() - downAt < 300) { buzz(); post('/remote/mouse', { click: 'left' }); }
+  last = null;
+});
+setInterval(() => {
+  const dx = Math.round(acc[0]), dy = Math.round(acc[1]);
+  if (dx || dy) { acc = [0, 0]; post('/remote/mouse', { dx, dy }); }
+}, 30);
+
+async function loadApps() {
+  const r = await fetch('/remote/apps', { headers: { 'X-Remote-Token': token } }).catch(() => null);
+  if (!r) return;
+  if (r.status === 401) { token = ''; localStorage.removeItem('xlabRemoteToken'); return show(); }
+  const data = await r.json();
+  if (!data.input) say('The TV cannot type yet: run install.sh again and log back in');
+  const box = $('apps'); box.innerHTML = '';
+  for (const a of data.apps) {
+    const b = document.createElement('button');
+    b.innerHTML = a.icon ? `<img src="${a.icon}" alt="">` : '';
+    if (!a.icon) b.style.background = `linear-gradient(135deg, ${a.color}, #111)`;
+    b.append(a.name);
+    b.onclick = () => { buzz(); post('/remote/launch', { id: a.id }); };
+    box.append(b);
+  }
+  $('now').textContent = data.running ? `Playing: ${(data.apps.find(a => a.id === data.running) || {}).name || ''}` : '';
+}
+setInterval(() => token && loadApps(), 10000);
+show();
+</script>
+</body>
+</html>

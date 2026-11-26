@@ -64,6 +64,28 @@ Optional keys per app: `icon` and `backdrop` (image paths). Check your edits wit
 Netflix, Prime Video and Disney+ open in Chrome (install with `xlab-tv-apps install netflix`);
 on Linux these services stream at lower resolution than on a TV or streaming stick.
 
+## Phone remote
+
+The service also serves a remote for your phone on the home network
+(`http://<this-pc>:8766/remote`). Pair a phone once with the 6-digit code from the TV
+(or its QR code); it then has buttons (D-pad, OK, Back = Esc, Home = close the app in
+front, play/pause, volume), a touchpad, typing, app shortcuts and power. Keys go to a
+virtual keyboard and mouse, so they work in every app. On Android, use Chrome's
+"Add to Home screen" to keep it as an app.
+
+- Pairing codes last 5 minutes or 5 wrong tries; each phone gets its own token,
+  kept in `~/.config/xlab-tv/remotes.json`. `POST /api/remote {"action": "forget"}`
+  unpairs every phone.
+- `install.sh` lets the logged-in user use `/dev/uinput` (the rule Steam uses) and
+  opens port 8766 if ufw is on. Turn the remote off with `--remote-port 0`.
+
+TV side: `GET /api/remote` → `{url, pairUrl, code, expiresIn, devices, inputError}`;
+show `code` and a QR code of `pairUrl`. Phone side (header `X-Remote-Token`):
+`POST /remote/pair {code, name}` → `{token}`, `POST /remote/key {key}` (up, down, left,
+right, ok, back, home, playpause, volup, voldown, mute, space, backspace, tab,
+fullscreen), `POST /remote/text {text}`, `POST /remote/mouse {dx, dy} | {click} | {scroll}`,
+`POST /remote/launch {id}`, `POST /remote/power {action}`, `GET /remote/apps`.
+
 ## The UI
 
 The front end is the React + Vite app at the repo root (`src/`, designed in Google AI

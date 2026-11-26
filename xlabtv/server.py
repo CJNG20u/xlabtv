@@ -14,6 +14,7 @@ import mimetypes
 import os
 import re
 import secrets
+import signal
 import subprocess
 import sys
 import threading
@@ -23,6 +24,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 import apps as apps_catalog  # noqa: E402  (xlabtv/apps.py, beside this file)
+import remote as remote_mod  # noqa: E402
 
 MAX_BODY = 4096
 POWER_COMMANDS = {
@@ -228,9 +230,25 @@ class Launcher:
         with self._lock:
             self._proc, self._running = proc, app_id
 
+    def stop(self) -> bool:
+        """Close the app in front (the remote's Home button). True if one was running."""
+        with self._lock:
+            proc = self._proc
+        if proc is None or proc.poll() is not None:
+            return False
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)   # its own session: the app and its helpers
+        except ProcessLookupError:
+            return False
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid, signal.SIGKILL)
+        return True
+
 
 def make_handler(library, launcher: Launcher, ui_dir: Path | None, token: str, port_ref: list,
-                 on_exit=None, run=subprocess.Popen, store=None):
+                 on_exit=None, run=subprocess.Popen, store=None, remote=None):
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "xlab-tv"
@@ -275,6 +293,8 @@ def make_handler(library, launcher: Launcher, ui_dir: Path | None, token: str, p
                     return self._json(200, api_apps(library.get()))
                 if path == "/api/status":
                     return self._json(200, {"running": launcher.status()})
+                if path == "/api/remote" and remote is not None:
+                    return self._json(200, remote.info())
                 if path == "/api/store" and store is not None:
                     library.get()
                     return self._json(200, {"items": store.items(library.detected)})
@@ -347,6 +367,11 @@ def make_handler(library, launcher: Launcher, ui_dir: Path | None, token: str, p
                 except RuntimeError as exc:
                     return self._json(409, {"ok": False, "error": str(exc)})
                 return self._json(200, {"ok": True})
+            if path == "/api/remote" and remote is not None:
+                if body.get("action") != "forget":
+                    return self._json(400, {"ok": False, "error": "action must be forget"})
+                remote.forget()
+                return self._json(200, {"ok": True})
             if path == "/api/store" and store is not None:
                 try:
                     store.request(str(body.get("id", "")), str(body.get("action", "")))
@@ -375,6 +400,45 @@ def make_handler(library, launcher: Launcher, ui_dir: Path | None, token: str, p
     return Handler
 
 
+class RemoteControl:
+    """What the TV needs to show the phone remote's pairing screen."""
+
+    def __init__(self, pairing, vinput, port: int):
+        self.pairing, self.vinput, self.port = pairing, vinput, port
+
+    def info(self) -> dict:
+        code, left = self.pairing.code()
+        url = f"http://{remote_mod.lan_address()}:{self.port}/remote"
+        return {"url": url, "pairUrl": f"{url}#pair={code}", "code": code, "expiresIn": left,
+                "devices": len(self.pairing.devices), "inputError": self.vinput.error}
+
+    def forget(self) -> None:
+        self.pairing.forget_all()
+
+
+def run_power_action(action: str) -> None:
+    if action not in POWER_COMMANDS:
+        raise KeyError(action)
+    subprocess.Popen(POWER_COMMANDS[action], stdin=subprocess.DEVNULL)
+
+
+def start_remote(port: int, library, launcher, ui_dir):
+    config_dir = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "xlab-tv"
+    pairing = remote_mod.Pairing(config_dir / "remotes.json")
+    vinput = remote_mod.VirtualInput()
+    threading.Thread(target=vinput.warm, daemon=True).start()
+    handler = remote_mod.make_remote_handler(pairing, vinput, library, launcher,
+                                             HERE / "remote.html", ui_dir, run_power_action)
+    try:
+        httpd = ThreadingHTTPServer(("0.0.0.0", port), handler)
+    except OSError as exc:
+        print(f"xlab-tv: phone remote off, port {port} unavailable ({exc.strerror})", file=sys.stderr)
+        return None
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    print(f"xlab-tv: phone remote on http://{remote_mod.lan_address()}:{port}/remote", flush=True)
+    return RemoteControl(pairing, vinput, port)
+
+
 def default_config_path() -> Path:
     base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
     return base / "xlab-tv" / "apps.json"
@@ -388,6 +452,7 @@ def main(argv=None) -> int:
     ap.add_argument("--log", type=Path, default=None, help="file for app output")
     ap.add_argument("--check", action="store_true", help="validate the config and exit")
     ap.add_argument("--port-file", type=Path, default=None, help="write the port in use here")
+    ap.add_argument("--remote-port", type=int, default=8766, help="phone remote on the home network (0 = off)")
     args = ap.parse_args(argv)
 
     catalog = apps_catalog.load_catalog()
@@ -415,7 +480,11 @@ def main(argv=None) -> int:
 
     cache = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "xlab-tv" / "icons"
     store = apps_catalog.Store(catalog, cache, on_change=library.invalidate)
-    handler = make_handler(library, launcher, ui_dir, token, port_ref, on_exit=stop, store=store)
+    remote = None
+    if args.remote_port:
+        remote = start_remote(args.remote_port, library, launcher, ui_dir)
+    handler = make_handler(library, launcher, ui_dir, token, port_ref, on_exit=stop, store=store,
+                           remote=remote)
     try:
         httpd = ThreadingHTTPServer(("127.0.0.1", args.port), handler)
     except OSError as exc:
