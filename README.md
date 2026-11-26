@@ -31,6 +31,9 @@ The Store's catalog (`xlabtv/catalog.json`, 40 TV-friendly apps):
 - **Play:** Steam (Big Picture), Moonlight, GeForce NOW, Xbox Cloud (Greenlight),
   PS Remote Play (chiaki-ng), Heroic, Lutris, RetroArch, RetroDECK, Dolphin, PCSX2, PPSSPP
 - **Web:** Firefox, Chrome
+- **System** (built in, not in the Store): **Terminal**, and **Updates**, which updates xLab TV
+  (`git pull` + `install.sh`), your Flatpak apps and Ubuntu in a terminal window. Ubuntu's
+  part asks for your password: type it with the phone remote.
 
 Install them from the **Store** on the TV, or from a terminal:
 
@@ -79,7 +82,20 @@ virtual keyboard and mouse, so they work in every app. On Android, use Chrome's
 - `install.sh` lets the logged-in user use `/dev/uinput` (the rule Steam uses) and
   opens port 8766 if ufw is on. Turn the remote off with `--remote-port 0`.
 
-TV side: `GET /api/remote` → `{url, pairUrl, code, expiresIn, devices, inputError}`;
+### Turning the TV on (Wake-on-LAN)
+
+A web page can't send the "magic packet" that wakes a PC, and the remote page lives on
+the PC that is asleep, so waking it needs something that stays on: Home Assistant (its
+**Wake on LAN** integration, with the MAC address below), a router with a WoL page, or a
+future native phone app. What the PC needs:
+
+- `install.sh` turns on Wake-on-LAN for your network connections (NetworkManager).
+- In the BIOS, enable Wake on LAN / "Power on by PCI-E", and disable ErP / deep sleep
+  if you want to wake it from off, not only from sleep.
+- Use Ethernet: Wi-Fi cards can at best wake the PC from sleep, and many can't at all.
+- The MAC address to wake: `wake.mac` in `GET /api/remote` (or `ip link`).
+
+TV side: `GET /api/remote` → `{url, pairUrl, code, expiresIn, devices, inputError, wake: {mac, interface, wireless}}`;
 show `code` and a QR code of `pairUrl`. Phone side (header `X-Remote-Token`):
 `POST /remote/pair {code, name}` → `{token}`, `POST /remote/key {key}` (up, down, left,
 right, ok, back, home, playpause, volup, voldown, mute, space, backspace, tab,

@@ -227,6 +227,24 @@ def lan_address() -> str:
         s.close()
 
 
+def wake_info(sys_net: Path = Path("/sys/class/net"), route: Path = Path("/proc/net/route")) -> dict | None:
+    """What a Wake-on-LAN sender needs: the MAC of the network card the default route uses."""
+    try:
+        lines = route.read_text().splitlines()[1:]
+    except OSError:
+        return None
+    for line in lines:
+        parts = line.split()
+        if len(parts) > 2 and parts[1] == "00000000":  # default route
+            iface = parts[0]
+            try:
+                mac = (sys_net / iface / "address").read_text().strip()
+            except OSError:
+                return None
+            return {"mac": mac, "interface": iface, "wireless": (sys_net / iface / "wireless").exists()}
+    return None
+
+
 def make_remote_handler(pairing: Pairing, vinput: VirtualInput, library, launcher, page: Path,
                         ui_dir: Path | None = None, run_power=None):
     """Handler for the home-network server. It never serves the launcher's own token."""
@@ -263,7 +281,7 @@ def make_remote_handler(pairing: Pairing, vinput: VirtualInput, library, launche
                          "icon": f"/remote/icon/{i}" if a["media"].get("icon") else ""}
                         for i, a in cfg["apps"].items()]
                 return self._json(200, {"apps": apps, "running": launcher.status(),
-                                        "input": vinput.error is None})
+                                        "input": vinput.error is None, "wake": wake_info()})
             if path.startswith("/remote/icon/"):
                 # icons are not secret; they let the remote show app tiles
                 app = library.get()["apps"].get(path.rsplit("/", 1)[-1], {})

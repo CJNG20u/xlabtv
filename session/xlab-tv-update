@@ -1,0 +1,32 @@
+#!/bin/sh
+# xLab TV's "Updates" tile: updates xLab TV, Flatpak apps and Ubuntu in one go.
+# install.sh fills in where the xlabtv checkout lives.
+REPO="@REPO@"
+
+step() { printf '\n\033[1;36m== %s\033[0m\n' "$*"; }
+failed=0
+
+step "xLab TV"
+if [ -d "$REPO/.git" ]; then
+    if (cd "$REPO" && git pull --ff-only && sh install.sh); then
+        echo "xLab TV is up to date (changes show after the next restart of xLab TV)."
+    else
+        echo "Could not update xLab TV."; failed=1
+    fi
+else
+    echo "No xlabtv checkout at $REPO; skipped."
+fi
+
+step "Apps (Flatpak)"
+flatpak update --user -y --noninteractive || failed=1
+
+step "Ubuntu (asks for your password; type it with the phone remote)"
+if sudo apt-get update && sudo apt-get -y upgrade; then :; else failed=1; fi
+
+if [ "$failed" -eq 0 ]; then
+    step "All done"
+else
+    step "Finished with problems (see above)"
+fi
+printf 'Press Enter (OK on the remote) to close.'
+read -r _

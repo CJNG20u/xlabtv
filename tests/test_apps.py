@@ -18,7 +18,7 @@ class CatalogTests(unittest.TestCase):
         rows = set(CATALOG["rows"])
         for app_id, entry in CATALOG["apps"].items():
             self.assertIn(entry["row"], rows, app_id)
-            self.assertTrue(entry.get("flatpak") or entry.get("web") or entry.get("install"), app_id)
+            self.assertTrue(entry.get("flatpak") or entry.get("web") or entry.get("terminal"), app_id)
 
     def test_nothing_installed(self):
         self.assertEqual(apps.detect(CATALOG, set(), which_none), {})
@@ -42,6 +42,18 @@ class CatalogTests(unittest.TestCase):
         self.assertEqual(found["netflix"]["command"],
                          ["flatpak", "run", "com.google.Chrome", "--start-fullscreen",
                           "--app=https://www.netflix.com/browse"])
+
+    def test_terminal_tools_use_the_first_terminal_found(self):
+        found = apps.detect(CATALOG, set(), lambda b: "/usr/bin/" + b if b in ("ptyxis", "xterm") else None)
+        self.assertEqual(found["terminal"]["command"], ["ptyxis", "--standalone", "--maximize"])
+        self.assertEqual(found["updates"]["command"],
+                         ["ptyxis", "--maximize", "--", "/usr/local/bin/xlab-tv-update"])
+        self.assertEqual(found["terminal"]["row"], "System")
+        self.assertNotIn("terminal", apps.detect(CATALOG, set(), which_none))
+
+    def test_store_leaves_out_built_in_tools(self):
+        store = apps.Store(CATALOG, Path(tempfile.mkdtemp()), run=lambda *a, **k: None, fetch=lambda u: b"")
+        self.assertNotIn("updates", [i["id"] for i in store.items({})])
 
     def test_icons_from_flatpak_exports(self):
         with tempfile.TemporaryDirectory() as tmp:

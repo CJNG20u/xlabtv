@@ -76,7 +76,14 @@ def detect(catalog: dict, flatpaks: set[str] | None = None, which=shutil.which,
     browser = catalog.get("browser", {})
     apps = {}
     for app_id, entry in catalog["apps"].items():
-        if entry.get("web"):
+        if entry.get("terminal"):
+            term = next((t for t in catalog.get("terminals", []) if which(t["binary"])), None)
+            if term is None:
+                continue
+            extra = entry["terminal"]
+            command = list(term["open"]) if extra is True else [*term["run"], *extra]
+            icon = find_icon("utilities-terminal", home) or find_icon("org.gnome.Ptyxis", home)
+        elif entry.get("web"):
             base = _command({k: v for k, v in browser.items() if k != "args"}, flatpaks, which)
             if base is None:
                 continue
@@ -152,6 +159,8 @@ class Store:
         self._start_icon_fetch()
         out = []
         for app_id, entry in self.catalog["apps"].items():
+            if entry.get("terminal"):
+                continue  # built-in tools, nothing to install
             icon = (installed.get(app_id, {}).get("media", {}).get("icon") or self.icon_path(app_id))
             out.append({
                 "id": app_id,
@@ -233,7 +242,8 @@ class Store:
     def _fetch_icons(self):
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         for app_id, entry in self.catalog["apps"].items():
-            if entry.get("web") or entry.get("remote", "flathub") != "flathub" or self.icon_path(app_id):
+            if (entry.get("web") or entry.get("terminal") or entry.get("remote", "flathub") != "flathub"
+                    or self.icon_path(app_id)):
                 continue
             try:
                 meta = json.loads(self.fetch(FLATHUB_APPSTREAM.format(entry["flatpak"])))
@@ -255,13 +265,15 @@ def _fetch_url(url: str) -> bytes:
 def cmd_list(catalog: dict) -> int:
     installed = detect(catalog)
     for app_id, entry in catalog["apps"].items():
+        if entry.get("terminal"):
+            continue
         mark = "installed" if app_id in installed else "-"
         print(f"  {app_id:<10} {entry['name']:<12} {mark}")
     return 0
 
 
 def cmd_install(catalog: dict, names: list[str]) -> int:
-    unknown = [n for n in names if n not in catalog["apps"]]
+    unknown = [n for n in names if n not in catalog["apps"] or catalog["apps"][n].get("terminal")]
     if unknown:
         print(f"Unknown app(s): {', '.join(unknown)}. Run 'list' to see the names.", file=sys.stderr)
         return 2

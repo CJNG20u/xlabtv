@@ -56,6 +56,22 @@ if command -v ufw >/dev/null 2>&1 && sudo ufw status | grep -q "Status: active";
     sudo ufw allow 8766/tcp comment "xLab TV phone remote" >/dev/null
 fi
 
+# The "Updates" tile runs this; it knows where this checkout is.
+sed "s|@REPO@|$(pwd)|" session/xlab-tv-update | sudo tee /usr/local/bin/xlab-tv-update >/dev/null
+sudo chmod 0755 /usr/local/bin/xlab-tv-update
+
+# Wake-on-LAN: let the network card wake the PC with a "magic packet" (Ethernet
+# from sleep or off, if the BIOS allows it; Wi-Fi from sleep only, if the card can).
+if command -v nmcli >/dev/null 2>&1; then
+    echo "==> Turning on Wake-on-LAN for your network connections"
+    nmcli -t -f NAME,TYPE connection show | while IFS=: read -r name type; do
+        case "$type" in
+            802-3-ethernet) sudo nmcli connection modify "$name" 802-3-ethernet.wake-on-lan magic || true ;;
+            802-11-wireless) sudo nmcli connection modify "$name" 802-11-wireless.wake-on-wlan magic 2>/dev/null || true ;;
+        esac
+    done
+fi
+
 # Earlier versions added a cage login session, which crashes with Firefox: remove it.
 sudo rm -f /usr/share/wayland-sessions/xlab-tv.desktop
 ACCT=/var/lib/AccountsService/users/$USER_NAME

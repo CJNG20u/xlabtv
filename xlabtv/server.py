@@ -410,7 +410,8 @@ class RemoteControl:
         code, left = self.pairing.code()
         url = f"http://{remote_mod.lan_address()}:{self.port}/remote"
         return {"url": url, "pairUrl": f"{url}#pair={code}", "code": code, "expiresIn": left,
-                "devices": len(self.pairing.devices), "inputError": self.vinput.error}
+                "devices": len(self.pairing.devices), "inputError": self.vinput.error,
+                "wake": remote_mod.wake_info()}
 
     def forget(self) -> None:
         self.pairing.forget_all()

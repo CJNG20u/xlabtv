@@ -198,3 +198,22 @@ class RemoteServerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WakeTests(unittest.TestCase):
+    def test_default_route_card(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            route = d / "route"
+            route.write_text("Iface\tDestination\tGateway\n"
+                             "enp2s0\t0001A8C0\t00000000\n"
+                             "enp2s0\t00000000\t0101A8C0\n")
+            (d / "enp2s0").mkdir()
+            (d / "enp2s0" / "address").write_text("aa:bb:cc:dd:ee:ff\n")
+            self.assertEqual(remote.wake_info(d, route),
+                             {"mac": "aa:bb:cc:dd:ee:ff", "interface": "enp2s0", "wireless": False})
+            (d / "enp2s0" / "wireless").mkdir()
+            self.assertTrue(remote.wake_info(d, route)["wireless"])
+
+    def test_no_route(self):
+        self.assertIsNone(remote.wake_info(Path("/nonexistent"), Path("/nonexistent/route")))

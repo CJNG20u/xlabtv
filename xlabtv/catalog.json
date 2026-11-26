@@ -1,5 +1,5 @@
 {
-  "rows": ["Watch", "Live & Free", "Music", "Play", "Web"],
+  "rows": ["Watch", "Live & Free", "Music", "Play", "Web", "System"],
   "remotes": {
       "flathub": "https://dl.flathub.org/repo/flathub.flatpakrepo",
       "nuvio": "https://iamslokker.github.io/NuvioDesktop-Linux/flatpak/nuvio.flatpakrepo"
@@ -44,7 +44,14 @@
     "pcsx2": {"name": "PCSX2", "subtitle": "PlayStation 2", "row": "Play", "color": "#1e40af", "flatpak": "net.pcsx2.PCSX2", "description": "PlayStation 2 emulator with a Big Picture mode."},
     "ppsspp": {"name": "PPSSPP", "subtitle": "PSP", "row": "Play", "color": "#0e7490", "flatpak": "org.ppsspp.PPSSPP", "description": "PlayStation Portable emulator."},
     "firefox": {"name": "Firefox", "subtitle": "Web browser", "row": "Web", "color": "#ea580c", "binary": "firefox", "flatpak": "org.mozilla.firefox", "description": "Browse the web on your TV."},
-    "chrome": {"name": "Chrome", "subtitle": "Web browser", "row": "Web", "color": "#2563eb", "binary": "google-chrome", "flatpak": "com.google.Chrome", "description": "Google's browser. Also needed for Netflix, Prime Video and Disney+."}
+    "chrome": {"name": "Chrome", "subtitle": "Web browser", "row": "Web", "color": "#2563eb", "binary": "google-chrome", "flatpak": "com.google.Chrome", "description": "Google's browser. Also needed for Netflix, Prime Video and Disney+."},
+    "terminal": {"name": "Terminal", "subtitle": "Command line", "row": "System", "color": "#334155", "terminal": true, "description": "A full-screen terminal. Type with the phone remote."},
+    "updates": {"name": "Updates", "subtitle": "xLab TV, apps and Ubuntu", "row": "System", "color": "#0f766e", "terminal": ["/usr/local/bin/xlab-tv-update"], "description": "Updates xLab TV, your Flatpak apps and Ubuntu in a terminal (asks for your password for Ubuntu)."}
   },
-  "browser": {"binary": "google-chrome", "flatpak": "com.google.Chrome", "args": ["--start-fullscreen", "--app={url}"]}
+  "browser": {"binary": "google-chrome", "flatpak": "com.google.Chrome", "args": ["--start-fullscreen", "--app={url}"]},
+  "terminals": [
+    {"binary": "ptyxis", "open": ["ptyxis", "--standalone", "--maximize"], "run": ["ptyxis", "--maximize", "--"]},
+    {"binary": "gnome-terminal", "open": ["gnome-terminal", "--wait", "--maximize"], "run": ["gnome-terminal", "--wait", "--maximize", "--"]},
+    {"binary": "xterm", "open": ["xterm", "-maximized"], "run": ["xterm", "-maximized", "-e"]}
+  ]
 }
