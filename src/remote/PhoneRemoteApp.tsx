@@ -11,11 +11,13 @@ import {
   Delete,
   Home,
   Keyboard,
+  Menu,
   Moon,
   Play,
   Power,
   RotateCw,
   Send,
+  Settings,
   Volume1,
   Volume2,
   VolumeX,
@@ -32,11 +34,11 @@ import {
   sendRemotePower,
   sendRemoteText,
   setRemoteUnauthorizedListener,
+  type RemoteAppButtons,
   type RemoteAppItem,
   type RemoteKey,
   type RemoteMousePayload,
   type RemotePowerAction,
-  type RemoteResult,
 } from '../remoteApi';
 import { buildCardGradient, buildIconTileSurface } from '../utils/color';
 import { Touchpad } from './Touchpad';
@@ -100,6 +102,7 @@ export function PhoneRemoteApp() {
 
   const [apps, setApps] = useState<RemoteAppItem[]>([]);
   const [runningId, setRunningId] = useState<string | null>(null);
+  const [appButtons, setAppButtons] = useState<RemoteAppButtons | null>(null);
   const [inputReady, setInputReady] = useState<boolean>(true);
   const [failedIcons, setFailedIcons] = useState<Record<string, boolean>>({});
 
@@ -220,6 +223,7 @@ export function PhoneRemoteApp() {
         }
         setApps(result.data.apps);
         setRunningId(result.data.running);
+        setAppButtons(result.data.appButtons);
         setInputReady(result.data.input);
       } catch {
         // Aborted
@@ -257,9 +261,17 @@ export function PhoneRemoteApp() {
   const fireKey = useCallback(
     (key: RemoteKey) => {
       hapticTap();
-      void sendRemoteKey(key).then(handleApiError);
+      void sendRemoteKey(key).then((result) => {
+        handleApiError(result);
+        if (result.ok && key === 'home') {
+          void refreshApps(undefined, true);
+          window.setTimeout(() => {
+            void refreshApps(undefined, true);
+          }, 600);
+        }
+      });
     },
-    [handleApiError]
+    [handleApiError, refreshApps]
   );
 
   const startHoldKey = useCallback(
@@ -314,9 +326,10 @@ export function PhoneRemoteApp() {
         return;
       }
       setRunningId(app.id);
+      void refreshApps(undefined, true);
       window.setTimeout(() => {
         void refreshApps(undefined, true);
-      }, 1500);
+      }, 1200);
     },
     [handleApiError, refreshApps]
   );
@@ -351,6 +364,13 @@ export function PhoneRemoteApp() {
     }
     return apps.find((a) => a.id === runningId)?.name ?? runningId;
   }, [runningId, apps]);
+
+  const frontAppMeta = useMemo(() => {
+    if (!appButtons) {
+      return null;
+    }
+    return apps.find((a) => a.id === appButtons.app) ?? null;
+  }, [appButtons, apps]);
 
   // 1. PAIRING SCREEN
   if (!token) {
@@ -627,6 +647,105 @@ export function PhoneRemoteApp() {
             <span className="text-xs font-medium text-[#94A3B8]">Vol +</span>
           </button>
         </div>
+
+        {/* Front App Shortcut Buttons (between volume row and keyboard button) */}
+        {appButtons && appButtons.groups.length > 0 && (
+          <section
+            aria-label={`${appButtons.name} controls`}
+            className="space-y-3.5 rounded-2xl border border-white/10 bg-[#11151F] p-3.5"
+          >
+            {/* App header with icon from apps grid + app name */}
+            <div className="flex items-center gap-2.5 px-0.5">
+              {(() => {
+                const iconUrl = frontAppMeta?.icon ?? '';
+                const hasIcon =
+                  Boolean(iconUrl) && !failedIcons[appButtons.app];
+                const tileColor = frontAppMeta?.color ?? '#334155';
+
+                return (
+                  <div
+                    className="flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-white/15"
+                    style={{
+                      background: hasIcon
+                        ? buildIconTileSurface(tileColor)
+                        : buildCardGradient(tileColor),
+                    }}
+                  >
+                    {hasIcon ? (
+                      <img
+                        src={iconUrl}
+                        alt=""
+                        referrerPolicy="no-referrer"
+                        decoding="async"
+                        onError={() =>
+                          setFailedIcons((prev) => ({
+                            ...prev,
+                            [appButtons.app]: true,
+                          }))
+                        }
+                        className="h-5 w-5 object-contain"
+                      />
+                    ) : (
+                      <span className="font-display text-xs leading-none font-bold text-white">
+                        {appButtons.name.slice(0, 1).toUpperCase()}
+                      </span>
+                    )}
+                  </div>
+                );
+              })()}
+              <h2 className="truncate font-display text-sm font-bold tracking-tight text-[#F8FAFC]">
+                {appButtons.name}
+              </h2>
+            </div>
+
+            {/* Button groups */}
+            <div className="space-y-3.5">
+              {appButtons.groups.map((group) => (
+                <div key={group.title} className="space-y-2">
+                  <h3 className="px-0.5 text-[11px] font-semibold tracking-[0.08em] text-[#94A3B8] uppercase">
+                    {group.title}
+                  </h3>
+                  <div className="grid grid-cols-3 gap-2">
+                    {group.buttons.map((btn, idx) => {
+                      const lowerLabel = btn.label.trim().toLowerCase();
+                      const ButtonIcon =
+                        lowerLabel === 'menu'
+                          ? Menu
+                          : lowerLabel === 'settings'
+                            ? Settings
+                            : null;
+
+                      return (
+                        <button
+                          key={`${group.title}-${btn.label}-${btn.key}-${idx}`}
+                          type="button"
+                          onClick={() => fireKey(btn.key)}
+                          className="flex min-h-[52px] touch-none select-none flex-col items-center justify-center rounded-[26px] border border-white/10 bg-[#171D2B] px-2.5 py-2 text-center text-[#F1F5F9] active:scale-[0.97] active:border-[#38BDF8]/50 active:bg-[#222B3E]"
+                        >
+                          <span className="flex max-w-full items-center justify-center gap-1.5 text-[13px] leading-tight font-semibold">
+                            {ButtonIcon && (
+                              <ButtonIcon
+                                className="h-3.5 w-3.5 shrink-0 text-[#38BDF8]"
+                                strokeWidth={2.2}
+                                aria-hidden="true"
+                              />
+                            )}
+                            <span className="truncate">{btn.label}</span>
+                          </span>
+                          {btn.hint && (
+                            <span className="mt-0.5 line-clamp-2 w-full text-[10px] leading-tight font-normal text-[#94A3B8]">
+                              {btn.hint}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* Keyboard Toggle & Text Input Drawer */}
         <div className="rounded-2xl border border-white/10 bg-[#11151F] p-2.5">
