@@ -2,18 +2,22 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import {
   fetchAppsWithStatus,
+  fetchRemoteInfo,
   fetchStatus,
   fetchStoreWithStatus,
+  forgetAllPhones,
   isAppsPayloadEmpty,
   launchApp,
   sendPowerAction,
   submitStoreAction,
   type PowerAction,
+  type RemotePairingInfo,
 } from './api';
 import { AmbientScreensaver } from './components/AmbientScreensaver';
 import { ContentRow } from './components/ContentRow';
 import { EmptyErrorState } from './components/EmptyErrorState';
 import { HeroBanner } from './components/HeroBanner';
+import { PhoneRemotePanel } from './components/PhoneRemotePanel';
 import {
   POWER_OPTIONS,
   SettingsDrawer,
@@ -29,6 +33,7 @@ import {
   mockStoreData,
   STORE_CARD_ID,
   storeCardItem,
+  type ContentRow as ContentRowData,
   type HeroItem,
   type MockData,
   type RowItem,
@@ -61,14 +66,44 @@ const DEFAULT_SETTINGS: LauncherSettings = {
   showNavHints: true,
 };
 
-const SETTINGS_ITEM_COUNT = 8; // 0..3 Power & Session actions, 4..7 Display toggles
+const SETTINGS_ITEM_COUNT = 9; // 0 Phone remote, 1..4 Power & Session actions, 5..8 Display toggles
 const STATUS_POLL_INTERVAL_MS = 2000;
 const STORE_POLL_INTERVAL_MS = 2000;
+const APPS_IDLE_REFRESH_MS = 60_000;
 const POWER_ARM_TIMEOUT_MS = 5000;
 const TOAST_DURATION_MS = 4500;
 const LAUNCH_TIMEOUT_MS = 20000;
 const SCREENSAVER_IDLE_MS = 10 * 60 * 1000;
 const PERSISTENT_API_FAILURE_THRESHOLD = 3;
+
+/**
+ * Preserves backend row ordering, hides empty rows, and appends the Store card
+ * to the end of the first non-media row (falling back to row 0 if all rows are media).
+ */
+function computeDisplayRows(rawRows: ContentRowData[]): ContentRowData[] {
+  const nonEmpty = rawRows.filter((row) => row.items.length > 0);
+  if (nonEmpty.length === 0) {
+    return nonEmpty;
+  }
+
+  const alreadyHasStore = nonEmpty.some((row) =>
+    row.items.some((item) => item.id === STORE_CARD_ID)
+  );
+  if (alreadyHasStore) {
+    return nonEmpty;
+  }
+
+  const firstAppRowIdx = nonEmpty.findIndex((row) =>
+    row.items.some((item) => item.kind !== 'media')
+  );
+  const targetIdx = firstAppRowIdx >= 0 ? firstAppRowIdx : 0;
+
+  return nonEmpty.map((row, idx) =>
+    idx === targetIdx
+      ? { ...row, items: [...row.items, storeCardItem] }
+      : row
+  );
+}
 
 export default function App() {
   const [launcherData, setLauncherData] = useState<MockData>(mockData);
@@ -111,6 +146,15 @@ export default function App() {
   const [pendingPowerAction, setPendingPowerAction] =
     useState<PowerAction | null>(null);
 
+  // TV Phone Remote pairing panel state
+  const [phoneRemoteOpen, setPhoneRemoteOpen] = useState<boolean>(false);
+  const [remoteInfo, setRemoteInfo] = useState<RemotePairingInfo | null>(null);
+  const [remoteLoading, setRemoteLoading] = useState<boolean>(false);
+  const [remoteError, setRemoteError] = useState<string | null>(null);
+  const [remoteSecondsLeft, setRemoteSecondsLeft] = useState<number>(0);
+  const [forgetPhonesArmed, setForgetPhonesArmed] = useState<boolean>(false);
+  const [forgettingPhones, setForgettingPhones] = useState<boolean>(false);
+
   // Separate optimistic launch state (subject to 20s timeout) from backend-confirmed running state
   const [pendingLaunch, setPendingLaunch] = useState<PendingLaunch | null>(null);
   const [confirmedRunningId, setConfirmedRunningId] = useState<string | null>(
@@ -125,10 +169,13 @@ export default function App() {
 
   const toastTimerRef = useRef<number | null>(null);
   const powerArmTimerRef = useRef<number | null>(null);
+  const forgetArmTimerRef = useRef<number | null>(null);
+  const remoteFetchControllerRef = useRef<AbortController | null>(null);
   const launchTimeoutRef = useRef<number | null>(null);
   const idleTimerRef = useRef<number | null>(null);
 
   const lastLaunchedFocusRef = useRef<FocusState | null>(null);
+  const lastLaunchedItemIdRef = useRef<string | null>(null);
   const storeReturnFocusRef = useRef<FocusState>({ zone: 'hero' });
   const lastTopBarButtonRef = useRef<TopBarButton>('store');
   const prevConfirmedRunningRef = useRef<string | null>(null);
@@ -140,26 +187,22 @@ export default function App() {
 
   const heroItems = launcherData.hero;
 
-  // Hide empty rows and append the "Store" card as the last item of the first row
-  const rows = useMemo(() => {
-    const nonEmpty = launcherData.rows.filter((row) => row.items.length > 0);
-    if (nonEmpty.length === 0) {
-      return nonEmpty;
-    }
-
-    const [firstRow, ...restRows] = nonEmpty;
-    const hasStoreCard = firstRow.items.some(
-      (item) => item.id === STORE_CARD_ID
-    );
-    const firstRowWithStore = hasStoreCard
-      ? firstRow
-      : { ...firstRow, items: [...firstRow.items, storeCardItem] };
-
-    return [firstRowWithStore, ...restRows];
-  }, [launcherData.rows]);
+  const rows = useMemo(
+    () => computeDisplayRows(launcherData.rows),
+    [launcherData.rows]
+  );
 
   const rowsRef = useRef(rows);
   rowsRef.current = rows;
+
+  const focusRef = useRef(focus);
+  focusRef.current = focus;
+
+  const heroItemsRef = useRef(heroItems);
+  heroItemsRef.current = heroItems;
+
+  const heroIndexRef = useRef(heroIndex);
+  heroIndexRef.current = heroIndex;
 
   const storeRows = useMemo(
     () => groupStoreItemsByCategory(storeItems),
@@ -211,6 +254,12 @@ export default function App() {
       }
       if (powerArmTimerRef.current !== null) {
         window.clearTimeout(powerArmTimerRef.current);
+      }
+      if (forgetArmTimerRef.current !== null) {
+        window.clearTimeout(forgetArmTimerRef.current);
+      }
+      if (remoteFetchControllerRef.current !== null) {
+        remoteFetchControllerRef.current.abort();
       }
       if (launchTimeoutRef.current !== null) {
         window.clearTimeout(launchTimeoutRef.current);
@@ -273,10 +322,17 @@ export default function App() {
     };
   }, [screensaverActive, wakeScreensaver, resetIdleTimer]);
 
-  // Load apps from GET /api/apps (dev mode falls back to mockData; empty or persistent failures show Retry screen)
+  // Load apps from GET /api/apps (dev mode falls back to mockData; preserves focus on same item ID)
   const loadApps = useCallback(
-    async (options?: { isManualRetry?: boolean; signal?: AbortSignal }) => {
+    async (options?: {
+      isManualRetry?: boolean;
+      silent?: boolean;
+      signal?: AbortSignal;
+      preferredItemId?: string | null;
+      preferredFocus?: FocusState | null;
+    }) => {
       const isManualRetry = Boolean(options?.isManualRetry);
+      const isSilent = Boolean(options?.silent);
       if (isManualRetry) {
         setRetryingApps(true);
       }
@@ -292,43 +348,112 @@ export default function App() {
           consecutiveAppsFailuresRef.current = 0;
           consecutiveStatusFailuresRef.current = 0;
           setApiErrorMessage(null);
+
+          const prevRows = rowsRef.current;
+          const nextRows = computeDisplayRows(result.data.rows);
+          const prevHeroItems = heroItemsRef.current;
+          const prevHeroIdx = heroIndexRef.current;
+          const focusedHeroId = prevHeroItems[prevHeroIdx]?.id ?? null;
+          const currentFocus = options?.preferredFocus ?? focusRef.current;
+
           setLauncherData(result.data);
-          setHeroIndex((prev) =>
-            result.data.hero.length > 0
-              ? Math.min(prev, result.data.hero.length - 1)
-              : 0
-          );
+
+          if (result.data.hero.length > 0) {
+            const matchedHeroIdx = focusedHeroId
+              ? result.data.hero.findIndex((item) => item.id === focusedHeroId)
+              : -1;
+            setHeroIndex(
+              matchedHeroIdx >= 0
+                ? matchedHeroIdx
+                : Math.min(prevHeroIdx, result.data.hero.length - 1)
+            );
+          } else {
+            setHeroIndex(0);
+          }
 
           if (isAppsPayloadEmpty(result.data)) {
             setFocus({ zone: 'retry' });
-          } else {
-            setFocus((curr) => {
-              const nonEmptyRows = result.data.rows.filter(
-                (row) => row.items.length > 0
-              );
-              if (curr.zone === 'retry') {
-                return result.data.hero.length > 0
-                  ? { zone: 'hero' }
-                  : { zone: 'row', rowIndex: 0, colIndex: 0 };
+          } else if (currentFocus.zone === 'retry') {
+            setFocus(
+              result.data.hero.length > 0
+                ? { zone: 'hero' }
+                : { zone: 'row', rowIndex: 0, colIndex: 0 }
+            );
+          } else if (currentFocus.zone === 'hero') {
+            if (result.data.hero.length === 0 && nextRows.length > 0) {
+              setFocus({ zone: 'row', rowIndex: 0, colIndex: 0 });
+            } else {
+              setFocus({ zone: 'hero' });
+            }
+          } else if (currentFocus.zone === 'row') {
+            if (nextRows.length === 0) {
+              setFocus({ zone: 'hero' });
+            } else {
+              const prevRow = prevRows[currentFocus.rowIndex];
+              const prevRowTitle = prevRow?.title ?? null;
+              const targetItemId =
+                options?.preferredItemId ??
+                prevRow?.items[currentFocus.colIndex]?.id ??
+                null;
+
+              let resolvedRow = -1;
+              let resolvedCol = -1;
+
+              // 1. Keep focus on the exact same item ID if it still exists (same row preferred)
+              if (targetItemId) {
+                if (prevRowTitle) {
+                  const sameTitleIdx = nextRows.findIndex(
+                    (row) => row.title === prevRowTitle
+                  );
+                  if (sameTitleIdx >= 0) {
+                    const colIdx = nextRows[sameTitleIdx].items.findIndex(
+                      (item) => item.id === targetItemId
+                    );
+                    if (colIdx >= 0) {
+                      resolvedRow = sameTitleIdx;
+                      resolvedCol = colIdx;
+                    }
+                  }
+                }
+                if (resolvedRow < 0) {
+                  for (let r = 0; r < nextRows.length; r++) {
+                    const colIdx = nextRows[r].items.findIndex(
+                      (item) => item.id === targetItemId
+                    );
+                    if (colIdx >= 0) {
+                      resolvedRow = r;
+                      resolvedCol = colIdx;
+                      break;
+                    }
+                  }
+                }
               }
-              if (curr.zone !== 'row') {
-                return curr;
+
+              // 2. Otherwise stay on the nearest item in the same row (or nearest available row)
+              if (resolvedRow < 0) {
+                const sameTitleIdx = prevRowTitle
+                  ? nextRows.findIndex((row) => row.title === prevRowTitle)
+                  : -1;
+                resolvedRow =
+                  sameTitleIdx >= 0
+                    ? sameTitleIdx
+                    : Math.min(currentFocus.rowIndex, nextRows.length - 1);
+                resolvedCol = Math.min(
+                  currentFocus.colIndex,
+                  Math.max(0, nextRows[resolvedRow].items.length - 1)
+                );
               }
-              if (nonEmptyRows.length === 0) {
-                return { zone: 'hero' };
-              }
-              const safeRow = Math.min(curr.rowIndex, nonEmptyRows.length - 1);
-              const extraStoreSlot =
-                safeRow === 0 &&
-                !nonEmptyRows[0].items.some((i) => i.id === STORE_CARD_ID)
-                  ? 1
-                  : 0;
-              const safeCol = Math.min(
-                curr.colIndex,
-                Math.max(0, nonEmptyRows[safeRow].items.length + extraStoreSlot - 1)
-              );
-              return { zone: 'row', rowIndex: safeRow, colIndex: safeCol };
-            });
+
+              setFocus({
+                zone: 'row',
+                rowIndex: resolvedRow,
+                colIndex: resolvedCol,
+              });
+              setRowMemory((prev) => ({
+                ...prev,
+                [resolvedRow]: resolvedCol,
+              }));
+            }
           }
           return;
         }
@@ -336,7 +461,7 @@ export default function App() {
         // Request failed
         consecutiveAppsFailuresRef.current += 1;
 
-        // In dev mode without a backend, fall back seamlessly to mockData on startup
+        // In dev mode without a backend, fall back seamlessly to mockData on startup/background
         if (
           import.meta.env.DEV &&
           !isManualRetry &&
@@ -347,17 +472,17 @@ export default function App() {
           return;
         }
 
-        // In production builds or after persistent/manual failures, show friendly Retry screen
+        // Background silent refreshes only surface an error screen after repeated failures
         if (
           isManualRetry ||
-          backendConnectedOnceRef.current ||
+          (!isSilent && backendConnectedOnceRef.current) ||
           consecutiveAppsFailuresRef.current >= PERSISTENT_API_FAILURE_THRESHOLD
         ) {
           setApiErrorMessage(
             result.error ?? 'Unable to reach the local xLab TV service.'
           );
           setFocus({ zone: 'retry' });
-        } else {
+        } else if (!isSilent) {
           // Schedule automatic startup retry in production before declaring persistent failure
           window.setTimeout(() => {
             if (!options?.signal?.aborted) {
@@ -376,11 +501,30 @@ export default function App() {
     []
   );
 
+  const loadAppsRef = useRef(loadApps);
+  loadAppsRef.current = loadApps;
+
   useEffect(() => {
     const controller = new AbortController();
     void loadApps({ signal: controller.signal });
     return () => controller.abort();
   }, [loadApps]);
+
+  // Periodically refetch GET /api/apps every 60 s while idle (no app running)
+  useEffect(() => {
+    if (activeOverlayId !== null) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      if (document.visibilityState === 'hidden') {
+        return;
+      }
+      void loadApps({ silent: true });
+    }, APPS_IDLE_REFRESH_MS);
+
+    return () => window.clearInterval(intervalId);
+  }, [activeOverlayId, loadApps]);
 
   // Apply fresh Store catalog and detect job transitions (done/failed -> toast + refetch /api/apps)
   const applyStoreItems = useCallback(
@@ -651,9 +795,11 @@ export default function App() {
             prevConfirmedRunningRef.current = null;
             setConfirmedRunningId(null);
 
+            const launchedItemId = lastLaunchedItemIdRef.current ?? finishedId;
             const targetFocus =
-              lastLaunchedFocusRef.current ?? findFocusForItemId(finishedId);
+              lastLaunchedFocusRef.current ?? findFocusForItemId(launchedItemId);
             lastLaunchedFocusRef.current = null;
+            lastLaunchedItemIdRef.current = null;
 
             if (targetFocus) {
               setFocus(targetFocus);
@@ -664,6 +810,13 @@ export default function App() {
                 }));
               }
             }
+
+            // Refetch GET /api/apps when returning from a running app to update Continue watching
+            void loadAppsRef.current({
+              silent: true,
+              preferredItemId: launchedItemId,
+              preferredFocus: targetFocus,
+            });
           }
         }
       } finally {
@@ -727,19 +880,6 @@ export default function App() {
     }
     return '';
   }, [confirmedRunningId, pendingLaunch, resolveDisplayName]);
-
-  // Pre-collect all row item backdrops so HeroBanner crossfades instantaneously
-  const backdropPool = useMemo(() => {
-    const urls: string[] = [];
-    for (const row of rows) {
-      for (const item of row.items) {
-        if (item.backdrop) {
-          urls.push(item.backdrop);
-        }
-      }
-    }
-    return urls;
-  }, [rows]);
 
   // Crossfade hero backdrop to match the focused row item when it has a backdrop
   const focusedItemBackdrop = useMemo(() => {
@@ -847,10 +987,144 @@ export default function App() {
     }
   }, []);
 
+  const clearForgetArm = useCallback(() => {
+    setForgetPhonesArmed(false);
+    if (forgetArmTimerRef.current !== null) {
+      window.clearTimeout(forgetArmTimerRef.current);
+      forgetArmTimerRef.current = null;
+    }
+  }, []);
+
+  const loadRemoteInfo = useCallback(async () => {
+    if (remoteFetchControllerRef.current) {
+      remoteFetchControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    remoteFetchControllerRef.current = controller;
+    setRemoteLoading(true);
+
+    try {
+      const result = await fetchRemoteInfo(controller.signal);
+      if (controller.signal.aborted) {
+        return;
+      }
+
+      if (result.ok) {
+        setRemoteInfo(result.data);
+        setRemoteError(null);
+        setRemoteSecondsLeft(Math.max(1, Math.ceil(result.data.expiresIn)));
+      } else {
+        setRemoteError(
+          result.error ?? 'Unable to reach the xLab TV remote service.'
+        );
+      }
+    } catch {
+      // Aborted on panel close or unmount
+    } finally {
+      if (remoteFetchControllerRef.current === controller) {
+        remoteFetchControllerRef.current = null;
+        setRemoteLoading(false);
+      }
+    }
+  }, []);
+
+  const openPhoneRemote = useCallback(() => {
+    clearArmedPower();
+    clearForgetArm();
+    setRemoteError(null);
+    setPhoneRemoteOpen(true);
+    void loadRemoteInfo();
+  }, [clearArmedPower, clearForgetArm, loadRemoteInfo]);
+
+  const closePhoneRemote = useCallback(() => {
+    clearForgetArm();
+    if (remoteFetchControllerRef.current) {
+      remoteFetchControllerRef.current.abort();
+      remoteFetchControllerRef.current = null;
+    }
+    setRemoteLoading(false);
+    setPhoneRemoteOpen(false);
+  }, [clearForgetArm]);
+
+  // Live countdown for phone remote pairing code; auto-refetches GET /api/remote when it hits 0
+  useEffect(() => {
+    if (!phoneRemoteOpen || !remoteInfo) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      setRemoteSecondsLeft((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, [phoneRemoteOpen, remoteInfo]);
+
+  useEffect(() => {
+    if (
+      phoneRemoteOpen &&
+      remoteInfo !== null &&
+      remoteSecondsLeft === 0 &&
+      !remoteLoading &&
+      !remoteError
+    ) {
+      void loadRemoteInfo();
+    }
+  }, [
+    phoneRemoteOpen,
+    remoteInfo,
+    remoteSecondsLeft,
+    remoteLoading,
+    remoteError,
+    loadRemoteInfo,
+  ]);
+
+  const handlePhoneRemotePrimaryAction = useCallback(async () => {
+    if (remoteError && !remoteInfo) {
+      void loadRemoteInfo();
+      return;
+    }
+
+    if (forgettingPhones || !remoteInfo) {
+      return;
+    }
+
+    if (!forgetPhonesArmed) {
+      clearForgetArm();
+      setForgetPhonesArmed(true);
+      forgetArmTimerRef.current = window.setTimeout(() => {
+        setForgetPhonesArmed(false);
+        forgetArmTimerRef.current = null;
+      }, POWER_ARM_TIMEOUT_MS);
+      return;
+    }
+
+    clearForgetArm();
+    setForgettingPhones(true);
+    const result = await forgetAllPhones();
+    setForgettingPhones(false);
+
+    if (!result.ok) {
+      showToast(result.error, 'error');
+      return;
+    }
+
+    showToast('All paired phones forgotten.', 'info');
+    void loadRemoteInfo();
+  }, [
+    remoteError,
+    remoteInfo,
+    forgettingPhones,
+    forgetPhonesArmed,
+    clearForgetArm,
+    loadRemoteInfo,
+    showToast,
+  ]);
+
   const closeSettings = useCallback(() => {
     clearArmedPower();
+    closePhoneRemote();
     setSettingsOpen(false);
-  }, [clearArmedPower]);
+  }, [clearArmedPower, closePhoneRemote]);
 
   const openSettings = useCallback(() => {
     clearArmedPower();
@@ -861,7 +1135,10 @@ export default function App() {
   const handleSettingsFocusChange = useCallback(
     (nextIndex: number) => {
       setSettingsFocusIndex(nextIndex);
-      const focusedPower = POWER_OPTIONS[nextIndex]?.action ?? null;
+      const focusedPower =
+        nextIndex >= 1 && nextIndex <= POWER_OPTIONS.length
+          ? POWER_OPTIONS[nextIndex - 1]?.action ?? null
+          : null;
       if (armedPowerAction && focusedPower !== armedPowerAction) {
         clearArmedPower();
       }
@@ -908,21 +1185,28 @@ export default function App() {
     [armedPowerAction, pendingPowerAction, clearArmedPower, showToast]
   );
 
-  // Shared launcher for card or hero Open button -> POST /api/launch
+  // Shared launcher for card or hero Open/Resume button -> POST /api/launch
   const executeLaunch = useCallback(
-    async (id: string, displayName: string, restoreFocus: FocusState) => {
+    async (
+      id: string,
+      displayName: string,
+      restoreFocus: FocusState,
+      focusItemId?: string
+    ) => {
       if (launchingRequestId !== null || activeOverlayId !== null) {
         return;
       }
 
       setLaunchingRequestId(id);
       lastLaunchedFocusRef.current = restoreFocus;
+      lastLaunchedItemIdRef.current = focusItemId ?? id;
 
       const result = await launchApp(id);
       setLaunchingRequestId(null);
 
       if (!result.ok) {
         lastLaunchedFocusRef.current = null;
+        lastLaunchedItemIdRef.current = null;
         showToast(result.error, 'error');
         return;
       }
@@ -934,9 +1218,10 @@ export default function App() {
 
   const handleOpenHero = useCallback(
     (item: HeroItem) => {
-      const targetId = item.appId || item.id;
+      const targetId =
+        item.kind === 'media' ? item.id || item.appId : item.appId || item.id;
       const displayName = item.title || resolveDisplayName(targetId);
-      void executeLaunch(targetId, displayName, { zone: 'hero' });
+      void executeLaunch(targetId, displayName, { zone: 'hero' }, item.id);
     },
     [executeLaunch, resolveDisplayName]
   );
@@ -947,11 +1232,16 @@ export default function App() {
         openStore({ zone: 'row', rowIndex, colIndex });
         return;
       }
-      void executeLaunch(item.id, item.name, {
-        zone: 'row',
-        rowIndex,
-        colIndex,
-      });
+      void executeLaunch(
+        item.id,
+        item.name,
+        {
+          zone: 'row',
+          rowIndex,
+          colIndex,
+        },
+        item.id
+      );
     },
     [openStore, executeLaunch]
   );
@@ -968,10 +1258,22 @@ export default function App() {
 
       // Gamepad Start toggles Settings from anywhere
       if (action === 'settings') {
-        if (settingsOpen) {
+        if (phoneRemoteOpen || settingsOpen) {
           closeSettings();
         } else {
           openSettings();
+        }
+        return;
+      }
+
+      // 0. Phone Remote Pairing Panel spatial focus (Back closes, Activate triggers primary button)
+      if (phoneRemoteOpen) {
+        if (action === 'back') {
+          closePhoneRemote();
+          return;
+        }
+        if (action === 'activate') {
+          void handlePhoneRemotePrimaryAction();
         }
         return;
       }
@@ -993,18 +1295,23 @@ export default function App() {
           return;
         }
         if (action === 'activate') {
-          if (settingsFocusIndex < POWER_OPTIONS.length) {
-            const powerOpt = POWER_OPTIONS[settingsFocusIndex];
+          if (settingsFocusIndex === 0) {
+            openPhoneRemote();
+          } else if (
+            settingsFocusIndex >= 1 &&
+            settingsFocusIndex <= POWER_OPTIONS.length
+          ) {
+            const powerOpt = POWER_OPTIONS[settingsFocusIndex - 1];
             if (powerOpt) {
               void handleTriggerPower(powerOpt.action);
             }
-          } else if (settingsFocusIndex === 4) {
-            setSettings((s) => ({ ...s, use24HourClock: !s.use24HourClock }));
           } else if (settingsFocusIndex === 5) {
-            setSettings((s) => ({ ...s, autoAdvanceHero: !s.autoAdvanceHero }));
+            setSettings((s) => ({ ...s, use24HourClock: !s.use24HourClock }));
           } else if (settingsFocusIndex === 6) {
-            setSettings((s) => ({ ...s, showSubtitles: !s.showSubtitles }));
+            setSettings((s) => ({ ...s, autoAdvanceHero: !s.autoAdvanceHero }));
           } else if (settingsFocusIndex === 7) {
+            setSettings((s) => ({ ...s, showSubtitles: !s.showSubtitles }));
+          } else if (settingsFocusIndex === 8) {
             setSettings((s) => ({ ...s, showNavHints: !s.showNavHints }));
           }
         }
@@ -1247,6 +1554,7 @@ export default function App() {
     [
       resetIdleTimer,
       activeOverlayId,
+      phoneRemoteOpen,
       settingsOpen,
       settingsFocusIndex,
       storeOpen,
@@ -1264,6 +1572,9 @@ export default function App() {
       rowMemory,
       openSettings,
       closeSettings,
+      openPhoneRemote,
+      closePhoneRemote,
+      handlePhoneRemotePrimaryAction,
       handleSettingsFocusChange,
       handleTriggerPower,
       handleStoreAction,
@@ -1343,6 +1654,7 @@ export default function App() {
       !settings.autoAdvanceHero ||
       heroItems.length <= 1 ||
       settingsOpen ||
+      phoneRemoteOpen ||
       storeOpen ||
       activeOverlayId !== null ||
       screensaverActive ||
@@ -1361,6 +1673,7 @@ export default function App() {
     settings.autoAdvanceHero,
     heroItems.length,
     settingsOpen,
+    phoneRemoteOpen,
     storeOpen,
     activeOverlayId,
     screensaverActive,
@@ -1372,6 +1685,7 @@ export default function App() {
   const screensaverBackdrops = heroItems.length > 0 ? heroItems : mockData.hero;
   const homeInteractive =
     !settingsOpen &&
+    !phoneRemoteOpen &&
     !storeOpen &&
     !screensaverActive &&
     activeOverlayId === null;
@@ -1416,7 +1730,6 @@ export default function App() {
             activeIndex={heroIndex}
             isHeroFocused={homeInteractive && focus.zone === 'hero'}
             overrideBackdrop={focusedItemBackdrop}
-            backdropPool={backdropPool}
             appNameById={appNameById}
             onFocusHero={() => setFocus({ zone: 'hero' })}
             onOpenHero={handleOpenHero}
@@ -1478,6 +1791,7 @@ export default function App() {
           rowMemory={storeRowMemory}
           isGridActive={
             !settingsOpen &&
+            !phoneRemoteOpen &&
             !screensaverActive &&
             activeOverlayId === null &&
             selectedStoreItem === null
@@ -1502,7 +1816,7 @@ export default function App() {
         />
       )}
 
-      {/* Settings Side Panel with Sleep, Restart, Shut down, Exit to desktop */}
+      {/* Settings Side Panel with Phone Remote, Sleep, Restart, Shut down, Exit to desktop */}
       <SettingsDrawer
         isOpen={settingsOpen}
         focusedIndex={settingsFocusIndex}
@@ -1510,11 +1824,25 @@ export default function App() {
         pendingPowerAction={pendingPowerAction}
         settings={settings}
         onFocusIndex={handleSettingsFocusChange}
+        onOpenPhoneRemote={openPhoneRemote}
         onTriggerPower={(action) => void handleTriggerPower(action)}
         onUpdateSettings={(patch) =>
           setSettings((prev) => ({ ...prev, ...patch }))
         }
         onClose={closeSettings}
+      />
+
+      {/* TV Phone Remote Pairing Panel */}
+      <PhoneRemotePanel
+        isOpen={phoneRemoteOpen}
+        info={remoteInfo}
+        loading={remoteLoading}
+        error={remoteError}
+        secondsLeft={remoteSecondsLeft}
+        forgetArmed={forgetPhonesArmed}
+        forgetting={forgettingPhones}
+        onTriggerPrimary={() => void handlePhoneRemotePrimaryAction()}
+        onClose={closePhoneRemote}
       />
 
       {/* Dim "Opening <name>…" overlay while launching or running */}

@@ -366,3 +366,156 @@ export async function sendPowerAction(
     };
   }
 }
+
+export interface RemotePairingInfo {
+  url: string;
+  pairUrl: string;
+  code: string;
+  expiresIn: number;
+  devices: number;
+  inputError: string | null;
+}
+
+export type RemoteInfoFetchResult =
+  | {
+      ok: true;
+      data: RemotePairingInfo;
+      usedFallback: boolean;
+    }
+  | {
+      ok: false;
+      data: null;
+      usedFallback: false;
+      error: string;
+    };
+
+function buildMockRemoteInfo(): RemotePairingInfo {
+  const origin =
+    typeof window !== 'undefined' ? window.location.origin : 'http://127.0.0.1:8765';
+  const url = `${origin}/remote`;
+  const code = String(Math.floor(100000 + Math.random() * 900000));
+  return {
+    url,
+    pairUrl: `${url}#pair=${code}`,
+    code,
+    expiresIn: 120,
+    devices: 1,
+    inputError: null,
+  };
+}
+
+/**
+ * Fetches phone-remote pairing details from GET /api/remote.
+ * Falls back to a local preview payload in dev mode when no backend is running.
+ */
+export async function fetchRemoteInfo(
+  signal?: AbortSignal
+): Promise<RemoteInfoFetchResult> {
+  try {
+    const response = await fetch('/api/remote', {
+      method: 'GET',
+      headers: buildHeaders(),
+      signal,
+    });
+
+    if (!response.ok) {
+      if (import.meta.env.DEV) {
+        return { ok: true, data: buildMockRemoteInfo(), usedFallback: true };
+      }
+      return {
+        ok: false,
+        data: null,
+        usedFallback: false,
+        error: `Could not load phone remote info (HTTP ${response.status}).`,
+      };
+    }
+
+    const raw = (await response.json()) as Partial<RemotePairingInfo>;
+    const pairUrl = typeof raw.pairUrl === 'string' ? raw.pairUrl : '';
+    const derivedUrl = pairUrl ? pairUrl.split('#')[0] : '';
+    const url =
+      typeof raw.url === 'string' && raw.url.trim().length > 0
+        ? raw.url
+        : derivedUrl;
+    const code = typeof raw.code === 'string' ? raw.code : String(raw.code ?? '');
+    const expiresIn =
+      typeof raw.expiresIn === 'number' && Number.isFinite(raw.expiresIn)
+        ? Math.max(0, Math.floor(raw.expiresIn))
+        : 0;
+    const devices =
+      typeof raw.devices === 'number' && Number.isFinite(raw.devices)
+        ? Math.max(0, Math.floor(raw.devices))
+        : 0;
+    const inputError =
+      raw.inputError === null || raw.inputError === undefined
+        ? null
+        : String(raw.inputError);
+
+    return {
+      ok: true,
+      data: { url, pairUrl, code, expiresIn, devices, inputError },
+      usedFallback: false,
+    };
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw err;
+    }
+    if (import.meta.env.DEV) {
+      return { ok: true, data: buildMockRemoteInfo(), usedFallback: true };
+    }
+    return {
+      ok: false,
+      data: null,
+      usedFallback: false,
+      error: 'Unable to reach xLab TV backend.',
+    };
+  }
+}
+
+/**
+ * Unpairs all connected phone remotes via POST /api/remote {"action":"forget"}.
+ */
+export async function forgetAllPhones(): Promise<ApiActionResponse> {
+  try {
+    const response = await fetch('/api/remote', {
+      method: 'POST',
+      headers: buildHeaders(true),
+      body: JSON.stringify({ action: 'forget' }),
+    });
+
+    let payload: Partial<{ ok: boolean; error: string }> | null = null;
+    try {
+      payload = (await response.json()) as Partial<{ ok: boolean; error: string }>;
+    } catch {
+      payload = null;
+    }
+
+    if (payload && payload.ok === true) {
+      return { ok: true };
+    }
+
+    if (payload && payload.ok === false) {
+      return {
+        ok: false,
+        error:
+          typeof payload.error === 'string' && payload.error.trim().length > 0
+            ? payload.error
+            : 'Could not forget paired phones.',
+      };
+    }
+
+    if (response.ok) {
+      return { ok: true };
+    }
+
+    return {
+      ok: false,
+      error: `Request failed (HTTP ${response.status}).`,
+    };
+  } catch {
+    return {
+      ok: false,
+      error: 'Unable to reach xLab TV backend.',
+    };
+  }
+}

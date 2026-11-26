@@ -89,6 +89,7 @@ export function AmbientScreensaver({
             <img
               src={slide.backdrop}
               alt=""
+              loading="lazy"
               referrerPolicy="no-referrer"
               decoding="async"
               className="h-full w-full object-cover object-center"

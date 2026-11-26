@@ -12,13 +12,22 @@
    * At 3840x2160 (4K), 1rem = 32px so every layout dimension, gap,
    * card, and font size scales cleanly 2x without clipping.
    */
-  html {
+  html:not(.remote-mode) {
     font-size: clamp(10px, min(0.833333vw, 1.481481vh), 36px);
     background-color: #090b10;
     color: #f1f5f9;
     font-family: var(--font-sans);
     overflow-x: hidden;
     cursor: none;
+  }
+
+  html.remote-mode {
+    font-size: 16px;
+    background-color: #090b10;
+    color: #f1f5f9;
+    font-family: var(--font-sans);
+    overflow-x: hidden;
+    -webkit-tap-highlight-color: transparent;
   }
 
   body {
@@ -29,13 +38,13 @@
     overflow-x: hidden;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    cursor: none;
   }
 
-  /* Living-room 10-foot UI: hide mouse cursor globally */
-  *,
-  *::before,
-  *::after {
+  /* Living-room 10-foot UI: hide mouse cursor globally on TV mode only */
+  html:not(.remote-mode),
+  html:not(.remote-mode) *,
+  html:not(.remote-mode) *::before,
+  html:not(.remote-mode) *::after {
     cursor: none !important;
   }
 

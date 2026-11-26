@@ -12,22 +12,32 @@ import tvIcon from './assets/icons/tv.svg';
 import radioIcon from './assets/icons/radio.svg';
 import nasIcon from './assets/icons/nas.svg';
 import storeIcon from './assets/icons/store.svg';
+import northernPassageLogo from './assets/logos/northern-passage.svg';
+
+export type ItemKind = 'app' | 'media';
 
 export interface HeroItem {
   id: string;
+  kind?: ItemKind;
   title: string;
   subtitle: string;
   backdrop: string;
   appId: string;
+  eyebrow?: string;
+  progress?: number;
+  logo?: string;
 }
 
 export interface RowItem {
   id: string;
+  kind?: ItemKind;
   name: string;
   subtitle: string;
   icon: string;
   color: string;
   backdrop?: string;
+  poster?: string;
+  progress?: number;
 }
 
 export interface ContentRow {
@@ -43,21 +53,30 @@ export interface MockData {
 export const mockData: MockData = {
   hero: [
     {
-      id: 'hero-nordic-passage',
+      id: 'cw-northern-passage',
+      kind: 'media',
+      eyebrow: 'Continue watching in Nuvio',
       title: 'Northern Passage',
-      subtitle: '4K HDR · Direct Play from Living Room NAS · Resume at 42 min',
+      subtitle: '4K HDR · 38 min left',
       backdrop: heroNordicFjord,
+      logo: northernPassageLogo,
+      progress: 0.64,
       appId: 'jellyfin',
     },
     {
-      id: 'hero-orbital-horizon',
+      id: 'cw-orbital-horizon-s1e2',
+      kind: 'media',
+      eyebrow: 'Continue watching in Nuvio',
       title: 'Orbital Horizon',
-      subtitle: 'Director’s Cut · 5.1 DTS-HD Master Audio · Sci-Fi Collection',
+      subtitle: 'S1:E2 · Pilot · 30 min left',
       backdrop: heroOrbitalHorizon,
+      logo: '',
+      progress: 0.42,
       appId: 'kodi',
     },
     {
       id: 'hero-alpine-pass',
+      kind: 'app',
       title: 'Alpine Pass Rally',
       subtitle: 'Steam Play Proton · 1080p 60 fps · Controller Ready',
       backdrop: heroAlpineRally,
@@ -65,6 +84,7 @@ export const mockData: MockData = {
     },
     {
       id: 'hero-hifi-sessions',
+      kind: 'app',
       title: 'Late Night Sessions',
       subtitle: '24-bit / 96 kHz FLAC · Direct ALSA DAC · Acoustic Vault',
       backdrop: heroHifiStudio,
@@ -73,10 +93,38 @@ export const mockData: MockData = {
   ],
   rows: [
     {
+      title: 'Continue watching',
+      items: [
+        {
+          id: 'cw-northern-passage',
+          kind: 'media',
+          name: 'Northern Passage',
+          subtitle: 'Film · 38 min left',
+          icon: '',
+          color: '#1D4E6E',
+          backdrop: heroNordicFjord,
+          poster: heroNordicFjord,
+          progress: 0.64,
+        },
+        {
+          id: 'cw-orbital-horizon-s1e2',
+          kind: 'media',
+          name: 'Orbital Horizon',
+          subtitle: 'S1:E2 · Pilot · 30 min left',
+          icon: '',
+          color: '#3730A3',
+          backdrop: heroOrbitalHorizon,
+          poster: heroOrbitalHorizon,
+          progress: 0.42,
+        },
+      ],
+    },
+    {
       title: 'Apps',
       items: [
         {
           id: 'jellyfin',
+          kind: 'app',
           name: 'Jellyfin',
           subtitle: 'Local Media Server',
           icon: jellyfinIcon,
@@ -85,6 +133,7 @@ export const mockData: MockData = {
         },
         {
           id: 'kodi',
+          kind: 'app',
           name: 'Kodi',
           subtitle: 'Home Theater',
           icon: kodiIcon,
@@ -93,6 +142,7 @@ export const mockData: MockData = {
         },
         {
           id: 'steam',
+          kind: 'app',
           name: 'Steam Big Picture',
           subtitle: 'Linux Gaming',
           icon: steamIcon,
@@ -101,6 +151,7 @@ export const mockData: MockData = {
         },
         {
           id: 'retroarch',
+          kind: 'app',
           name: 'RetroArch',
           subtitle: 'Classic Consoles',
           icon: retroarchIcon,
@@ -108,6 +159,7 @@ export const mockData: MockData = {
         },
         {
           id: 'navidrome',
+          kind: 'app',
           name: 'Navidrome',
           subtitle: 'Lossless Music',
           icon: navidromeIcon,
@@ -116,6 +168,7 @@ export const mockData: MockData = {
         },
         {
           id: 'freetube',
+          kind: 'app',
           name: 'FreeTube',
           subtitle: 'Ad-Free Video',
           icon: '',
@@ -123,6 +176,7 @@ export const mockData: MockData = {
         },
         {
           id: 'moonlight',
+          kind: 'app',
           name: 'Moonlight',
           subtitle: 'LAN Game Stream',
           icon: '',
@@ -132,63 +186,11 @@ export const mockData: MockData = {
       ],
     },
     {
-      title: 'Continue Watching',
-      items: [
-        {
-          id: 'cw-northern-passage',
-          name: 'Northern Passage',
-          subtitle: 'Film · 38 min remaining',
-          icon: '',
-          color: '#1D4E6E',
-          backdrop: heroNordicFjord,
-        },
-        {
-          id: 'cw-orbital-horizon',
-          name: 'Orbital Horizon',
-          subtitle: 'Season 2 · Episode 4',
-          icon: '',
-          color: '#3730A3',
-          backdrop: heroOrbitalHorizon,
-        },
-        {
-          id: 'cw-timber-stone',
-          name: 'Timber & Stone',
-          subtitle: 'Documentary · 52 min left',
-          icon: '',
-          color: '#3F6212',
-          backdrop: heroNordicFjord,
-        },
-        {
-          id: 'cw-night-train',
-          name: 'Night Train North',
-          subtitle: 'Cinema · 1 hr 12 min left',
-          icon: '',
-          color: '#9A3412',
-          backdrop: heroAlpineRally,
-        },
-        {
-          id: 'cw-analog-acoustics',
-          name: 'Analog Acoustics',
-          subtitle: 'Series · Episode 2',
-          icon: '',
-          color: '#6B21A8',
-          backdrop: heroHifiStudio,
-        },
-        {
-          id: 'cw-arctic-drift',
-          name: 'Arctic Drift',
-          subtitle: 'Nature 4K · 24 min left',
-          icon: '',
-          color: '#0E7490',
-          backdrop: heroNordicFjord,
-        },
-      ],
-    },
-    {
       title: 'Live & Channels',
       items: [
         {
           id: 'live-dvb',
+          kind: 'app',
           name: 'Live DVB-T2',
           subtitle: 'TVHeadend Tuner',
           icon: tvIcon,
@@ -196,6 +198,7 @@ export const mockData: MockData = {
         },
         {
           id: 'radio-streams',
+          kind: 'app',
           name: 'FIP & Radio',
           subtitle: 'Lossless Web Streams',
           icon: radioIcon,
@@ -203,6 +206,7 @@ export const mockData: MockData = {
         },
         {
           id: 'home-cameras',
+          kind: 'app',
           name: 'Home Cameras',
           subtitle: 'Local RTSP Feeds',
           icon: '',
@@ -210,6 +214,7 @@ export const mockData: MockData = {
         },
         {
           id: 'podcasts',
+          kind: 'app',
           name: 'Podcasts',
           subtitle: '3 New Episodes',
           icon: '',
@@ -217,6 +222,7 @@ export const mockData: MockData = {
         },
         {
           id: 'ambient-loops',
+          kind: 'app',
           name: 'Fireplace & Rain',
           subtitle: 'Ambient 4K Loop',
           icon: '',
@@ -229,6 +235,7 @@ export const mockData: MockData = {
       items: [
         {
           id: 'nas-library',
+          kind: 'app',
           name: 'NAS Library',
           subtitle: 'SMB · 14.2 TB Free',
           icon: nasIcon,
@@ -236,6 +243,7 @@ export const mockData: MockData = {
         },
         {
           id: 'pipewire-audio',
+          kind: 'app',
           name: 'PipeWire Audio',
           subtitle: 'HDMI Passthrough',
           icon: '',
@@ -243,6 +251,7 @@ export const mockData: MockData = {
         },
         {
           id: 'controllers',
+          kind: 'app',
           name: 'Controllers',
           subtitle: '2 Gamepads Paired',
           icon: '',
@@ -250,6 +259,7 @@ export const mockData: MockData = {
         },
         {
           id: 'display-refresh',
+          kind: 'app',
           name: 'Display & Refresh',
           subtitle: '1080p · 60 Hz Output',
           icon: '',
@@ -257,6 +267,7 @@ export const mockData: MockData = {
         },
         {
           id: 'system-shell',
+          kind: 'app',
           name: 'System Shell',
           subtitle: 'Linux · Wayland Session',
           icon: '',
@@ -296,6 +307,7 @@ export const STORE_CARD_ID = 'store';
 
 export const storeCardItem: RowItem = {
   id: STORE_CARD_ID,
+  kind: 'app',
   name: 'Store',
   subtitle: 'Browse & Install Apps',
   icon: storeIcon,

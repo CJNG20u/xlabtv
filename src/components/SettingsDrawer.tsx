@@ -1,4 +1,12 @@
-import { LogOut, Moon, Power, RotateCw, X } from 'lucide-react';
+import {
+  ChevronRight,
+  LogOut,
+  Moon,
+  Power,
+  RotateCw,
+  Smartphone,
+  X,
+} from 'lucide-react';
 import type { PowerAction } from '../api';
 
 export interface LauncherSettings {
@@ -47,6 +55,7 @@ interface SettingsDrawerProps {
   pendingPowerAction: PowerAction | null;
   settings: LauncherSettings;
   onFocusIndex: (index: number) => void;
+  onOpenPhoneRemote: () => void;
   onTriggerPower: (action: PowerAction) => void;
   onUpdateSettings: (patch: Partial<LauncherSettings>) => void;
   onClose: () => void;
@@ -59,6 +68,7 @@ export function SettingsDrawer({
   pendingPowerAction,
   settings,
   onFocusIndex,
+  onOpenPhoneRemote,
   onTriggerPower,
   onUpdateSettings,
   onClose,
@@ -96,14 +106,58 @@ export function SettingsDrawer({
           </button>
         </div>
 
-        {/* Power & Session Actions (indices 0, 1, 2, 3) with two-press confirmation */}
-        <div className="mt-6">
-          <h3 className="mb-3 text-[1rem] font-semibold text-[#94A3B8]">
+        {/* Phone remote (index 0) */}
+        <div className="mt-5">
+          <h3 className="mb-2.5 text-[1rem] font-semibold text-[#94A3B8]">
+            Remote
+          </h3>
+          <button
+            type="button"
+            onClick={() => {
+              onFocusIndex(0);
+              onOpenPhoneRemote();
+            }}
+            onMouseEnter={() => onFocusIndex(0)}
+            onFocus={() => onFocusIndex(0)}
+            className={`tv-card relative flex w-full items-center justify-between gap-4 rounded-2xl border border-white/10 bg-[#151A25] px-5 py-3.5 text-left focus:outline-none ${
+              focusedIndex === 0 ? 'tv-btn-focused' : ''
+            }`}
+          >
+            <div className="flex items-center gap-4">
+              <span className="flex h-[2.625rem] w-[2.625rem] shrink-0 items-center justify-center rounded-xl border border-white/10 bg-[#1C2332] text-[#38BDF8]">
+                <Smartphone className="h-[1.25rem] w-[1.25rem]" />
+              </span>
+              <div>
+                <div className="text-[1.1875rem] font-semibold leading-snug text-[#F8FAFC]">
+                  Phone remote
+                </div>
+                <div className="mt-0.5 text-[0.9rem] text-[#94A3B8]">
+                  Pair a phone to control xLab TV
+                </div>
+              </div>
+            </div>
+            <ChevronRight
+              className="h-[1.3rem] w-[1.3rem] shrink-0 text-[#94A3B8]"
+              aria-hidden="true"
+            />
+            <span
+              aria-hidden="true"
+              className={`tv-focus-ring pointer-events-none absolute -inset-[3px] rounded-[1.125rem] border-[3px] border-[#38BDF8] ${
+                focusedIndex === 0 ? 'tv-focus-ring-active' : ''
+              }`}
+            />
+          </button>
+        </div>
+
+        {/* Power & Session Actions (indices 1, 2, 3, 4) with two-press confirmation */}
+        <div className="mt-5 border-t border-white/10 pt-5">
+          <h3 className="mb-2.5 text-[1rem] font-semibold text-[#94A3B8]">
             Power & Session
           </h3>
-          <div className="space-y-3">
-            {POWER_OPTIONS.map((opt, index) => {
-              const isFocused = focusedIndex === index;
+          <div className="space-y-2.5">
+            {POWER_OPTIONS.map((opt, idx) => {
+              const itemIndex = idx + 1;
+              const isFocused = focusedIndex === itemIndex;
               const isArmed = armedPowerAction === opt.action;
               const isPending = pendingPowerAction === opt.action;
 
@@ -122,12 +176,12 @@ export function SettingsDrawer({
                   type="button"
                   disabled={pendingPowerAction !== null}
                   onClick={() => {
-                    onFocusIndex(index);
+                    onFocusIndex(itemIndex);
                     onTriggerPower(opt.action);
                   }}
-                  onMouseEnter={() => onFocusIndex(index)}
-                  onFocus={() => onFocusIndex(index)}
-                  className={`tv-card relative flex w-full items-center justify-between gap-4 rounded-2xl border px-5 py-3.5 text-left focus:outline-none disabled:opacity-60 ${
+                  onMouseEnter={() => onFocusIndex(itemIndex)}
+                  onFocus={() => onFocusIndex(itemIndex)}
+                  className={`tv-card relative flex w-full items-center justify-between gap-4 rounded-2xl border px-5 py-3 text-left focus:outline-none disabled:opacity-60 ${
                     isArmed
                       ? 'border-amber-400/70 bg-[#241B12]'
                       : 'border-white/10 bg-[#151A25]'
@@ -135,17 +189,17 @@ export function SettingsDrawer({
                 >
                   <div className="flex items-center gap-4">
                     <span
-                      className={`flex h-[2.625rem] w-[2.625rem] shrink-0 items-center justify-center rounded-xl border ${
+                      className={`flex h-[2.5rem] w-[2.5rem] shrink-0 items-center justify-center rounded-xl border ${
                         isArmed
                           ? 'border-amber-400/60 bg-amber-400/15 text-amber-300'
                           : 'border-white/10 bg-[#1C2332] text-[#E2E8F0]'
                       }`}
                     >
-                      <Icon className="h-[1.25rem] w-[1.25rem]" />
+                      <Icon className="h-[1.2rem] w-[1.2rem]" />
                     </span>
                     <div>
                       <div
-                        className={`text-[1.1875rem] font-semibold leading-snug ${
+                        className={`text-[1.15rem] font-semibold leading-snug ${
                           isArmed ? 'text-amber-200' : 'text-[#F8FAFC]'
                         }`}
                       >
@@ -155,7 +209,7 @@ export function SettingsDrawer({
                             ? opt.confirmLabel
                             : opt.label}
                       </div>
-                      <div className="mt-0.5 text-[0.9rem] text-[#94A3B8]">
+                      <div className="mt-0.5 text-[0.875rem] text-[#94A3B8]">
                         {isArmed
                           ? 'Press Enter / A again to confirm'
                           : opt.description}
@@ -175,18 +229,18 @@ export function SettingsDrawer({
           </div>
         </div>
 
-        {/* Display & Launcher Preferences (indices 4, 5, 6, 7) */}
-        <div className="mt-6 border-t border-white/10 pt-6">
-          <h3 className="mb-3 text-[1rem] font-semibold text-[#94A3B8]">
+        {/* Display & Launcher Preferences (indices 5, 6, 7, 8) */}
+        <div className="mt-5 border-t border-white/10 pt-5">
+          <h3 className="mb-2.5 text-[1rem] font-semibold text-[#94A3B8]">
             Display
           </h3>
-          <div className="space-y-3">
+          <div className="space-y-2.5">
             <SettingToggleRow
               label="24-Hour Clock"
               description="Display time in 24-hour format"
               checked={settings.use24HourClock}
-              isFocused={focusedIndex === 4}
-              onFocus={() => onFocusIndex(4)}
+              isFocused={focusedIndex === 5}
+              onFocus={() => onFocusIndex(5)}
               onToggle={() =>
                 onUpdateSettings({ use24HourClock: !settings.use24HourClock })
               }
@@ -196,8 +250,8 @@ export function SettingsDrawer({
               label="Hero Auto-Advance"
               description="Cycle featured backdrops automatically"
               checked={settings.autoAdvanceHero}
-              isFocused={focusedIndex === 5}
-              onFocus={() => onFocusIndex(5)}
+              isFocused={focusedIndex === 6}
+              onFocus={() => onFocusIndex(6)}
               onToggle={() =>
                 onUpdateSettings({
                   autoAdvanceHero: !settings.autoAdvanceHero,
@@ -209,8 +263,8 @@ export function SettingsDrawer({
               label="Card Subtitles"
               description="Show secondary details below focused tiles"
               checked={settings.showSubtitles}
-              isFocused={focusedIndex === 6}
-              onFocus={() => onFocusIndex(6)}
+              isFocused={focusedIndex === 7}
+              onFocus={() => onFocusIndex(7)}
               onToggle={() =>
                 onUpdateSettings({ showSubtitles: !settings.showSubtitles })
               }
@@ -220,8 +274,8 @@ export function SettingsDrawer({
               label="Navigation Hints"
               description="Show keyboard and gamepad hints at bottom"
               checked={settings.showNavHints}
-              isFocused={focusedIndex === 7}
-              onFocus={() => onFocusIndex(7)}
+              isFocused={focusedIndex === 8}
+              onFocus={() => onFocusIndex(8)}
               onToggle={() =>
                 onUpdateSettings({ showNavHints: !settings.showNavHints })
               }
@@ -258,29 +312,29 @@ function SettingToggleRow({
       onClick={onToggle}
       onMouseEnter={onFocus}
       onFocus={onFocus}
-      className={`tv-card relative flex w-full items-center justify-between gap-5 rounded-2xl border border-white/10 bg-[#151A25] px-5 py-3.5 text-left focus:outline-none ${
+      className={`tv-card relative flex w-full items-center justify-between gap-5 rounded-2xl border border-white/10 bg-[#151A25] px-5 py-3 text-left focus:outline-none ${
         isFocused ? 'tv-btn-focused' : ''
       }`}
     >
       <div>
-        <div className="text-[1.125rem] font-semibold leading-snug text-[#F8FAFC]">
+        <div className="text-[1.1rem] font-semibold leading-snug text-[#F8FAFC]">
           {label}
         </div>
-        <div className="mt-0.5 text-[0.9rem] text-[#94A3B8]">{description}</div>
+        <div className="mt-0.5 text-[0.875rem] text-[#94A3B8]">{description}</div>
       </div>
 
       <span
         aria-hidden="true"
-        className={`relative flex h-[1.875rem] w-[3.4rem] shrink-0 items-center rounded-full border p-1 ${
+        className={`relative flex h-[1.8rem] w-[3.3rem] shrink-0 items-center rounded-full border p-1 ${
           checked
             ? 'border-[#38BDF8] bg-[#38BDF8]'
             : 'border-white/20 bg-[#0B0E14]'
         }`}
       >
         <span
-          className={`h-[1.25rem] w-[1.25rem] rounded-full transition-transform duration-150 ${
+          className={`h-[1.2rem] w-[1.2rem] rounded-full transition-transform duration-150 ${
             checked
-              ? 'translate-x-[1.5rem] bg-[#090B10]'
+              ? 'translate-x-[1.45rem] bg-[#090B10]'
               : 'translate-x-0 bg-[#94A3B8]'
           }`}
         />
