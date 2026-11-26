@@ -149,6 +149,10 @@ show `code` and a QR code of `pairUrl`. Phone side (header `X-Remote-Token`):
 right, ok, back, home, playpause, volup, voldown, mute, space, backspace, tab,
 fullscreen), `POST /remote/text {text}`, `POST /remote/mouse {dx, dy} | {click} | {scroll}`,
 `POST /remote/launch {id}`, `POST /remote/power {action}`, `GET /remote/apps`.
+`/remote/key` also takes an app's shortcut letters (`a`-`z`, `0`-`9`) and `f1`-`f12`.
+`GET /remote/apps` includes `appButtons`: the shortcuts of the app in front, from its
+`buttons` in the catalog (`{app, name, groups: [{title, buttons: [{label, key, hint?}]}]}`),
+e.g. Nuvio's Menu (panel ring, R), Search, Live TV, and player menu, subtitles, audio.
 
 ## The UI
 

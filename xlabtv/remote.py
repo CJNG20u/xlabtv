@@ -43,6 +43,17 @@ _PLAIN = {" ": "SPACE", "-": "MINUS", "=": "EQUAL", "[": "LEFTBRACE", "]": "RIGH
           "/": "SLASH", "`": "GRAVE", "\n": "ENTER"}
 
 
+def key_code(name: str) -> str | None:
+    """A remote button ("back"), an app shortcut letter ("r") or an F-key ("f7")."""
+    if name in KEYS:
+        return KEYS[name]
+    if len(name) == 1 and ("a" <= name <= "z" or "0" <= name <= "9"):
+        return f"KEY_{name.upper()}"
+    if name[:1] == "f" and name[1:].isdigit() and 1 <= int(name[1:]) <= 12:
+        return f"KEY_F{int(name[1:])}"
+    return None
+
+
 def char_key(ch: str) -> tuple[str, bool] | None:
     if "a" <= ch <= "z" or "0" <= ch <= "9":
         return f"KEY_{ch.upper()}", False
@@ -84,11 +95,12 @@ class VirtualInput:
             pass
 
     def key(self, name: str) -> None:
-        if name not in KEYS:
+        code = key_code(name)
+        if code is None:
             raise KeyError(name)
         with self._lock:
             b = self._get()
-            b.tap(KEYS[name])
+            b.tap(code)
 
     def text(self, text: str) -> int:
         typed = 0
@@ -123,6 +135,7 @@ def _evdev_backend():
 
     key_codes = sorted({getattr(e, k) for k in KEYS.values()} |
                        {getattr(e, f"KEY_{c}") for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"} |
+                       {getattr(e, f"KEY_F{n}") for n in range(1, 13)} |
                        {getattr(e, f"KEY_{n}") for n in list(_PLAIN.values()) + list(_SHIFTED.values())
                         if not n.isdigit()} | {e.KEY_LEFTSHIFT})
     keyboard = UInput({e.EV_KEY: key_codes}, name="xLab TV Remote Keyboard")
@@ -282,7 +295,13 @@ def make_remote_handler(pairing: Pairing, vinput: VirtualInput, library, launche
                 apps = [{"id": i, "name": a["name"], "color": a["color"],
                          "icon": f"/remote/icon/{i}" if a["media"].get("icon") else ""}
                         for i, a in cfg["apps"].items() if a.get("kind") != "media"]
-                return self._json(200, {"apps": apps, "running": launcher.front(), "open": launcher.open_apps(),
+                front = launcher.front()
+                front_app = cfg["apps"].get(front, {}) if front else {}
+                buttons = None
+                if front_app.get("buttons"):
+                    buttons = {"app": front, "name": front_app["name"], "groups": front_app["buttons"]}
+                return self._json(200, {"apps": apps, "running": front, "open": launcher.open_apps(),
+                                        "appButtons": buttons,
                                         "input": vinput.error is None, "wake": wake_info()})
             if path.startswith("/remote/icon/"):
                 # icons are not secret; they let the remote show app tiles

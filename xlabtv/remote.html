@@ -68,6 +68,7 @@
     <div class="row">
       <button data-key="voldown">🔉</button><button data-key="mute">🔇</button><button data-key="volup">🔊</button>
     </div>
+    <div id="appButtons"></div>
     <h2>Type</h2>
     <div class="row"><input id="text" placeholder="Type on the TV…" enterkeyhint="send"><button id="send" style="flex:0 0 80px">Send</button></div>
     <div class="row"><button data-key="backspace">⌫ Delete</button><button data-key="ok">⏎ Enter</button></div>
@@ -171,6 +172,19 @@ async function loadApps() {
     b.append(a.name);
     b.onclick = () => { buzz(); post('/remote/launch', { id: a.id }); };
     box.append(b);
+  }
+  // Buttons for the app in front (e.g. Nuvio's menu, search, subtitles)
+  const ab = $('appButtons'); ab.innerHTML = '';
+  for (const group of (data.appButtons && data.appButtons.groups) || []) {
+    const h = document.createElement('h2'); h.textContent = group.title; ab.append(h);
+    const grid = document.createElement('div'); grid.className = 'row'; grid.style.flexWrap = 'wrap';
+    for (const btn of group.buttons) {
+      const b = document.createElement('button'); b.textContent = btn.label; b.style.flex = '1 0 28%';
+      if (btn.hint) b.title = btn.hint;
+      b.onclick = () => { buzz(); post('/remote/key', { key: btn.key }); };
+      grid.append(b);
+    }
+    ab.append(grid);
   }
   $('now').textContent = data.running ? `Playing: ${(data.apps.find(a => a.id === data.running) || {}).name || ''}` : '';
 }

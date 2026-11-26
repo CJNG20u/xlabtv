@@ -99,6 +99,13 @@ class InputTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             vi.key("ok")
 
+    def test_app_shortcut_letters_and_f_keys(self):
+        self.assertEqual(remote.key_code("r"), "KEY_R")
+        self.assertEqual(remote.key_code("f7"), "KEY_F7")
+        self.assertEqual(remote.key_code("back"), "KEY_ESC")
+        for bad in ("R", "f13", "rm", "", "ö"):
+            self.assertIsNone(remote.key_code(bad), bad)
+
     def test_every_remote_key_maps_to_a_linux_key(self):
         for name, key in remote.KEYS.items():
             self.assertTrue(key.startswith("KEY_"), name)
@@ -110,12 +117,13 @@ class FakeLauncher:
     def __init__(self):
         self.stopped = 0
         self.launched = []
+        self.front_app = None
 
     def status(self):
         return None
 
     def front(self):
-        return None
+        return self.front_app
 
     def open_apps(self):
         return []
@@ -188,6 +196,18 @@ class RemoteServerTests(unittest.TestCase):
         finally:
             httpd.shutdown()
             httpd.server_close()
+
+    def test_buttons_of_the_app_in_front(self):
+        t = self.paired_token()
+        self.assertIsNone(self.call("GET", "/remote/apps", token=t)[1]["appButtons"])
+        cfg = self.library.get()
+        cfg["apps"]["kodi"]["buttons"] = [{"title": "Kodi", "buttons": [{"label": "Menu", "key": "c"}]}]
+        self.launcher.front_app = "kodi"
+        data = self.call("GET", "/remote/apps", token=t)[1]
+        self.assertEqual(data["appButtons"]["name"], "Kodi")
+        self.assertEqual(data["appButtons"]["groups"][0]["buttons"][0]["key"], "c")
+        self.assertEqual(self.call("POST", "/remote/key", {"key": "c"}, t)[0], 200)
+        self.assertEqual(self.fake.events[-1], ("tap", "KEY_C", False))
 
     def test_page_has_no_launcher_token(self):
         status, body = self.call("GET", "/remote")

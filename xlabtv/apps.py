@@ -103,6 +103,8 @@ def detect(catalog: dict, flatpaks: set[str] | None = None, which=shutil.which,
             "command": command,
             "media": {"icon": icon} if icon else {},
         }
+        if entry.get("buttons"):
+            apps[app_id]["buttons"] = entry["buttons"]  # app shortcuts for the phone remote
     return apps
 
 
