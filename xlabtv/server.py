@@ -92,6 +92,7 @@ def load_config(path: Path, detected: dict | None = None, catalog_rows: list | N
             "row": str(app.get("row") or base.get("row") or "Apps"),
             "command": cmd,
             "media": media or base.get("media", {}),
+            "freeze": bool(app.get("freeze", base.get("freeze", False))),
         }
 
     for app_id in hidden:
@@ -440,12 +441,61 @@ class Launcher:
         self._procs: dict[str, subprocess.Popen] = {}   # app id -> first process started for it
         self._order: list[str] = []                     # most recently opened last
         self._opening: tuple[str, float] | None = None
+        self._frozen: set[str] = set()   # apps paused in the background (SIGSTOP)
 
     def _prune(self):
         for app_id, proc in list(self._procs.items()):
             if proc.poll() is not None:
                 del self._procs[app_id]
                 self._order = [a for a in self._order if a != app_id]
+                self._frozen.discard(app_id)
+
+    # -- background apps: frozen while you're elsewhere, like Android does ----------
+    def _signal_tree(self, proc, sig) -> None:
+        for pid in process_tree(proc.pid):
+            try:
+                os.kill(pid, sig)
+            except (ProcessLookupError, PermissionError):
+                pass
+
+    def freeze_background(self, keep: str | None = None) -> list[str]:
+        """Freeze every open app marked "freeze" (video apps) except `keep`: sound and
+        picture stop where they are. Returns the apps frozen now."""
+        apps = self.library.get()["apps"]
+        frozen = []
+        with self._lock:
+            self._prune()
+            for app_id, proc in self._procs.items():
+                if app_id == keep or app_id in self._frozen or not apps.get(app_id, {}).get("freeze"):
+                    continue
+                self._signal_tree(proc, signal.SIGSTOP)
+                self._frozen.add(app_id)
+                frozen.append(app_id)
+        return frozen
+
+    def thaw(self, app_id: str) -> bool:
+        with self._lock:
+            proc = self._procs.get(app_id)
+            if app_id not in self._frozen or proc is None:
+                return False
+            self._signal_tree(proc, signal.SIGCONT)
+            self._frozen.discard(app_id)
+            return True
+
+    def thaw_pid(self, pid: int) -> str | None:
+        """Unfreeze the app that owns this process (the window the user switched to)."""
+        with self._lock:
+            owners = [(a, p) for a, p in self._procs.items() if a in self._frozen]
+        for app_id, proc in owners:
+            if pid in process_tree(proc.pid):
+                self.thaw(app_id)
+                return app_id
+        return None
+
+    def frozen(self) -> list[str]:
+        with self._lock:
+            self._prune()
+            return sorted(self._frozen)
 
     def status(self) -> str | None:
         """The app being opened right now (for a few seconds after a launch), else None."""
@@ -474,6 +524,8 @@ class Launcher:
         owner = app.get("parent", app_id)  # a preview belongs to its app
         if self.pause is not None:
             self.pause()  # one thing plays at a time: the app being left stops talking
+        self.freeze_background(keep=owner)   # and video apps left behind are frozen
+        self.thaw(owner)
         with self._lock:
             self._prune()
             running = self._procs.get(owner)
@@ -522,6 +574,7 @@ class Launcher:
             proc = self._procs.get(target) if target else None
         if proc is None or proc.poll() is not None:
             return False
+        self.thaw(target)   # a frozen app can't handle SIGTERM until it runs again
         try:
             os.killpg(proc.pid, signal.SIGTERM)   # its own session: the app and its helpers
         except ProcessLookupError:
@@ -535,6 +588,18 @@ class Launcher:
         return True
 
 
+def focused_pid(run=subprocess.run) -> int:
+    """Process id of the window in front (xLab TV GNOME extension), 0 if unknown."""
+    try:
+        out = run(["gdbus", "call", "--session", "--dest", "org.gnome.Shell",
+                   "--object-path", "/tv/xlab/Shell", "--method", "tv.xlab.Shell.FocusedPid"],
+                  capture_output=True, text=True, timeout=3)
+    except (OSError, subprocess.SubprocessError):
+        return 0
+    m = re.search(r"(\d+),?\)", out.stdout) if out.returncode == 0 else None  # "(uint32 4242,)"
+    return int(m.group(1)) if m else 0
+
+
 def show_launcher(run=subprocess.run) -> bool:
     """Bring the launcher window forward through the xLab TV GNOME extension."""
     try:
@@ -546,9 +611,27 @@ def show_launcher(run=subprocess.run) -> bool:
     return out.returncode == 0 and "true" in out.stdout
 
 
+FOCUS_SCRIPT = """<script>(function () {
+  var last = null;
+  function tell(visible) {
+    if (visible === last) return;
+    last = visible;
+    var t = document.querySelector('meta[name="xlab-token"]');
+    try {
+      fetch('/api/visible', {method: 'POST', keepalive: true,
+        headers: {'Content-Type': 'application/json', 'X-XLab-Token': t ? t.content : ''},
+        body: JSON.stringify({visible: visible})});
+    } catch (e) {}
+  }
+  window.addEventListener('focus', function () { tell(true); });
+  window.addEventListener('blur', function () { tell(false); });
+  document.addEventListener('visibilitychange', function () { tell(!document.hidden && document.hasFocus()); });
+})();</script>"""
+
+
 def make_handler(library, launcher: Launcher, ui_dir: Path | None, token: str, port_ref: list,
                  on_exit=None, run=subprocess.Popen, store=None, remote=None, settings=None,
-                 updates=None):
+                 updates=None, focused=None):
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "xlab-tv"
@@ -592,7 +675,8 @@ def make_handler(library, launcher: Launcher, ui_dir: Path | None, token: str, p
                 if path == "/api/apps":
                     return self._json(200, api_apps(library.get()))
                 if path == "/api/status":
-                    return self._json(200, {"running": launcher.status(), "open": launcher.open_apps()})
+                    return self._json(200, {"running": launcher.status(), "open": launcher.open_apps(),
+                                            "paused": launcher.frozen()})
                 if path == "/api/remote" and remote is not None:
                     return self._json(200, remote.info())
                 if path == "/api/updates" and updates is not None:
@@ -653,6 +737,10 @@ def make_handler(library, launcher: Launcher, ui_dir: Path | None, token: str, p
             html, n = re.subn(r'<meta\s+name="xlab-token"[^>]*>', meta, html, count=1)
             if not n:
                 html = html.replace("<head>", "<head>" + meta, 1) if "<head>" in html else meta + html
+            # Tell the service when this page comes to the front (freeze background video)
+            # or goes behind another window (wake the app switched to). Part of the service,
+            # not of the UI, so it works with any UI build.
+            html = html.replace(meta, meta + FOCUS_SCRIPT, 1)
             self._send(200, html.encode(), "text/html; charset=utf-8")
 
         # ---- POST ----------------------------------------------------
@@ -711,6 +799,28 @@ def make_handler(library, launcher: Launcher, ui_dir: Path | None, token: str, p
                     return self._json(409, {"ok": False, "error": str(exc)})
                 except (TypeError, ValueError):
                     return self._json(400, {"ok": False, "error": "bad value"})
+            if path == "/api/visible":
+                # the launcher page reports coming to the front or going behind another window
+                if body.get("visible"):
+                    frozen = launcher.freeze_background()
+                    return self._json(200, {"ok": True, "frozen": frozen})
+                if focused is not None:
+                    def resume_focused():
+                        # wait for GNOME to move focus, then wake the app you switched to
+                        known = False
+                        for delay in (0.3, 1.0):
+                            time.sleep(delay)
+                            pid = focused()
+                            known = known or pid > 0
+                            if launcher.thaw_pid(pid):
+                                return
+                        if not known:
+                            # can't tell which window is in front (no extension): wake them
+                            # all rather than leave the one on screen frozen
+                            for app_id in launcher.frozen():
+                                launcher.thaw(app_id)
+                    threading.Thread(target=resume_focused, daemon=True).start()
+                return self._json(200, {"ok": True})
             if path == "/api/close":
                 if not launcher.stop(str(body.get("id", ""))):
                     return self._json(404, {"ok": False, "error": "that app is not open"})
@@ -842,7 +952,7 @@ def main(argv=None) -> int:
     }
     updates = settings_mod.UpdateChecker()
     handler = make_handler(library, launcher, ui_dir, token, port_ref, on_exit=stop, store=store,
-                           remote=remote, settings=quick_settings, updates=updates)
+                           remote=remote, settings=quick_settings, updates=updates, focused=focused_pid)
     try:
         httpd = ThreadingHTTPServer(("127.0.0.1", args.port), handler)
     except OSError as exc:

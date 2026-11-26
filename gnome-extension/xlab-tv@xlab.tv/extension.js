@@ -7,6 +7,7 @@
 //   returns true when the launcher window was found. Video that is playing is paused first
 //   (any MPRIS player, e.g. Nuvio, VLC, mpv, Kodi, VacuumTube); music players listed in the
 //   keep-playing setting go on playing.
+// - FocusedPid(): the process id of the window in front.
 // - ActivatePids(au): brings forward the window of an app that is already open, found by
 //   the process ids of that app (GNOME doesn't let an app raise itself on Wayland).
 import Meta from 'gi://Meta';
@@ -26,6 +27,9 @@ const IFACE = `
     <method name="ActivatePids">
       <arg type="au" direction="in" name="pids"/>
       <arg type="b" direction="out" name="found"/>
+    </method>
+    <method name="FocusedPid">
+      <arg type="u" direction="out" name="pid"/>
     </method>
   </interface>
 </node>`;
@@ -64,6 +68,12 @@ export default class XlabTvExtension extends Extension {
         if (launcher)
             this._pausePlayers();
         return this._activate(launcher);
+    }
+
+    FocusedPid() {
+        // which app's window is in front: xLab TV wakes that app if it froze it
+        const pid = global.display.focus_window?.get_pid() ?? 0;
+        return pid > 0 ? pid : 0;
     }
 
     _pausePlayers() {

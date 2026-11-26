@@ -114,7 +114,13 @@ running, like a TV box:
   `gdbus call --session --dest org.gnome.Shell --object-path /tv/xlab/Shell --method tv.xlab.Shell.ShowLauncher`.
   GNOME loads it at the next login.
 - The phone remote's Home uses the extension too; without it, Home closes the most recent app.
-- Home pauses video that is playing (any MPRIS player: Nuvio, VLC, mpv, Kodi, VacuumTube and
+- Video apps you leave are **frozen** (paused exactly where they are, like Android does with
+  background apps) and wake up when you go back to them: when xLab TV comes to the front, and
+  when you open another app. Apps marked `"freeze": true` in the catalog (Nuvio, YouTube, Kodi,
+  VLC, mpv, Jellyfin, Plex, Stremio, FreeTube, Live TV) or in apps.json; music apps, games
+  and Chrome are never frozen. If you switch to a frozen app some other way (Alt+Tab), the
+  extension's `FocusedPid` tells the service which app to wake.
+- Home also asks media players to pause (any MPRIS player: Nuvio, VLC, mpv, Kodi, VacuumTube and
   other Chromium-based apps), while music players keep playing. Change it with
   `gsettings --schemadir ~/.local/share/gnome-shell/extensions/xlab-tv@xlab.tv/schemas set org.gnome.shell.extensions.xlab-tv pause-on-home false`
   or the `keep-playing` list (MPRIS names, e.g. `['spotify', 'plexamp']`).

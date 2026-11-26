@@ -1,4 +1,6 @@
 import http.client
+import os
+import signal
 import json
 import sys
 import tempfile
@@ -167,7 +169,8 @@ class ServerTests(unittest.TestCase):
         status, body = self.request("GET", "/", token=None)
         self.assertEqual(status, 200)
         self.assertIn(b'<meta name="xlab-token" content="test-token">', body)
-        self.assertEqual(body.count(b"xlab-token"), 1)
+        self.assertEqual(body.count(b'<meta name="xlab-token"'), 1)
+        self.assertIn(b"/api/visible", body)  # the focus script rides along
 
     def test_static_file_and_spa_fallback(self):
         self.assertEqual(self.request("GET", "/app.js")[1], b"console.log(1)")
@@ -199,10 +202,10 @@ class ServerTests(unittest.TestCase):
         status, body = self.request("POST", "/api/launch", {"id": "sleeper"})
         self.assertEqual((status, json.loads(body)), (200, {"ok": True}))
         self.assertEqual(json.loads(self.request("GET", "/api/status")[1]),
-                         {"running": "sleeper", "open": ["sleeper"]})
+                         {"running": "sleeper", "open": ["sleeper"], "paused": []})
         clock[0] += server.OPENING_SECONDS + 1   # "Opening…" is only for the first seconds
         self.assertEqual(json.loads(self.request("GET", "/api/status")[1]),
-                         {"running": None, "open": ["sleeper"]})
+                         {"running": None, "open": ["sleeper"], "paused": []})
         first = self.launcher._procs["sleeper"]
         # opening it again is fine: it is brought forward, not refused
         self.assertEqual(self.request("POST", "/api/launch", {"id": "sleeper"})[0], 200)
@@ -448,3 +451,129 @@ class PausePlayersTests(unittest.TestCase):
         self.assertEqual(order, ["pause"])
         for p in launcher._procs.values():
             p.wait()
+
+
+def proc_state(pid):
+    stat = Path(f"/proc/{pid}/stat").read_text()
+    return stat[stat.rfind(")") + 2]
+
+
+class FreezeTests(unittest.TestCase):
+    def setUp(self):
+        sleep = [sys.executable, "-c", "import time; time.sleep(60)"]
+
+        class Lib:
+            def get(self):
+                return {"apps": {"video": {"name": "Video", "command": sleep, "freeze": True},
+                                 "other": {"name": "Other", "command": sleep, "freeze": True},
+                                 "music": {"name": "Music", "command": sleep}}}
+        self.launcher = server.Launcher(Lib())
+
+    def tearDown(self):
+        for p in self.launcher._procs.values():
+            try:
+                os.kill(p.pid, signal.SIGCONT)
+            except ProcessLookupError:
+                pass
+            p.kill()
+            p.wait()
+
+    def wait_state(self, pid, want):
+        import time
+        for _ in range(100):
+            if proc_state(pid) in want:
+                return proc_state(pid)
+            time.sleep(0.01)
+        return proc_state(pid)
+
+    def test_leaving_an_app_freezes_it_and_coming_back_wakes_it(self):
+        L = self.launcher
+        L.launch("video")
+        L.launch("music")                       # video app left behind: frozen
+        video = L._procs["video"].pid
+        self.assertEqual(L.frozen(), ["video"])
+        self.assertEqual(self.wait_state(video, "T"), "T")
+        L.launch("other")                       # music is never frozen
+        self.assertEqual(L.frozen(), ["video"])
+        L.launch("video")                       # back to video: woken, other frozen
+        self.assertIn(self.wait_state(video, "SR"), "SR")   # running again
+        self.assertEqual(L.frozen(), ["other"])
+
+    def test_launcher_in_front_freezes_and_focus_wakes(self):
+        L = self.launcher
+        L.launch("video")
+        self.assertEqual(L.freeze_background(), ["video"])   # Home: launcher came to the front
+        pid = L._procs["video"].pid
+        self.assertEqual(L.thaw_pid(pid), "video")           # user switched to its window
+        self.assertEqual(L.frozen(), [])
+        self.assertIsNone(L.thaw_pid(999999))
+
+    def test_closing_a_frozen_app_works(self):
+        L = self.launcher
+        L.launch("video")
+        L.freeze_background()
+        self.assertTrue(L.stop("video"))
+        self.assertEqual(L.open_apps(), [])
+
+
+class FocusedPidTests(unittest.TestCase):
+    def test_parse(self):
+        import subprocess
+        ok = lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, "(uint32 4242,)\n", "")
+        self.assertEqual(server.focused_pid(ok), 4242)
+        bad = lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, "", "No such method")
+        self.assertEqual(server.focused_pid(bad), 0)
+
+
+class VisibleEndpointTests(unittest.TestCase):
+    def setUp(self):
+        sleep = [sys.executable, "-c", "import time; time.sleep(60)"]
+
+        class Lib:
+            def get(self):
+                return {"apps": {"video": {"name": "Video", "command": sleep, "freeze": True}}, "power": True}
+        self.launcher = server.Launcher(Lib())
+        self.focus = [0]
+        port_ref = [0]
+        handler = server.make_handler(Lib(), self.launcher, None, TOKEN, port_ref,
+                                      focused=lambda: self.focus[0])
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        port_ref[0] = self.port = self.httpd.server_address[1]
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def tearDown(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+        for p in self.launcher._procs.values():
+            try:
+                os.kill(p.pid, signal.SIGCONT)
+            except ProcessLookupError:
+                pass
+            p.kill()
+            p.wait()
+
+    def post(self, body):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.request("POST", "/api/visible", body=json.dumps(body),
+                     headers={"Host": f"127.0.0.1:{self.port}", "X-XLab-Token": TOKEN,
+                              "Content-Type": "application/json"})
+        r = conn.getresponse()
+        out = (r.status, json.loads(r.read()))
+        conn.close()
+        return out
+
+    def test_front_freezes_behind_wakes(self):
+        self.launcher.launch("video")
+        self.assertEqual(self.post({"visible": True}), (200, {"ok": True, "frozen": ["video"]}))
+        self.focus[0] = self.launcher._procs["video"].pid   # user switched to the video window
+        self.assertEqual(self.post({"visible": False})[0], 200)
+        time.sleep(0.6)
+        self.assertEqual(self.launcher.frozen(), [])
+
+    def test_unknown_focus_wakes_everything(self):
+        self.launcher.launch("video")
+        self.post({"visible": True})
+        self.focus[0] = 0                                     # no extension to ask
+        self.post({"visible": False})
+        time.sleep(1.6)
+        self.assertEqual(self.launcher.frozen(), [])
