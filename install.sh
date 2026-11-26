@@ -20,8 +20,8 @@ sudo apt-get install -y python3 python3-gi gir1.2-gtk-4.0 gir1.2-webkit-6.0 flat
 
 echo "==> Copying xLab TV to $PREFIX"
 sudo mkdir -p "$PREFIX/xlabtv" "$PREFIX/session" "$PREFIX/ui"
-sudo install -m 0644 xlabtv/server.py xlabtv/apps.py xlabtv/catalog.json xlabtv/window.py \
-    xlabtv/remote.py xlabtv/remote.html xlabtv/fallback.html "$PREFIX/xlabtv/"
+# every backend file (so a new module can't be forgotten here)
+sudo install -m 0644 xlabtv/*.py xlabtv/*.json xlabtv/*.html "$PREFIX/xlabtv/"
 # "xlab-tv-apps list" / "xlab-tv-apps install youtube spotify"
 printf '#!/bin/sh\nexec python3 %s/xlabtv/apps.py "$@"\n' "$PREFIX" | sudo tee /usr/local/bin/xlab-tv-apps >/dev/null
 sudo chmod 0755 /usr/local/bin/xlab-tv-apps

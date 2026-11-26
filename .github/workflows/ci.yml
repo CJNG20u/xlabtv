@@ -11,6 +11,11 @@ jobs:
       - uses: actions/checkout@v4
       - run: python3 -m unittest discover -s tests -v
       - run: python3 xlabtv/server.py --config apps.example.json --check
+      - name: Installed copy runs (same files install.sh copies)
+        run: |
+          d=$(mktemp -d)
+          install -m 0644 xlabtv/*.py xlabtv/*.json xlabtv/*.html "$d/"
+          cd / && python3 "$d/server.py" --config "$GITHUB_WORKSPACE/apps.example.json" --check
       - run: sh -n install.sh && sh -n session/xlab-tv-kiosk
       - name: Phone remote creates its virtual keyboard and mouse
         run: |
