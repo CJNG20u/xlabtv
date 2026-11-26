@@ -9,7 +9,7 @@ export interface StoreCategoryRow {
   items: StoreItem[];
 }
 
-export const STORE_CATEGORY_ORDER = ['Watch', 'Music', 'Play', 'Web'];
+export const STORE_CATEGORY_ORDER = ['Watch', 'Live & Free', 'Music', 'Play', 'Web'];
 
 export function groupStoreItemsByCategory(
   items: StoreItem[]

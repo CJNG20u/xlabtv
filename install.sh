@@ -1,7 +1,7 @@
 #!/bin/sh
 # Installs xLab TV on Ubuntu. Run from the repo folder as your normal user:
-#   ./install.sh                 the launcher opens full screen when you log in
-#   ./install.sh --autologin     also log in automatically and keep the screen on
+#   sh install.sh                the launcher opens full screen when you log in
+#   sh install.sh --autologin    also log in automatically and keep the screen on
 set -eu
 
 PREFIX=/usr/lib/xlab-tv

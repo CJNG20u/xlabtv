@@ -15,8 +15,8 @@ login (Ubuntu desktop) ──► autostart: xlab-tv-kiosk
 ```sh
 sudo apt install nodejs npm      # to build the UI
 git clone https://github.com/CJNG20u/xlabtv.git && cd xlabtv
-./install.sh               # the launcher opens full screen when you log in
-./install.sh --autologin   # also logs in automatically and keeps the screen on
+sh install.sh               # the launcher opens full screen when you log in
+sh install.sh --autologin   # also logs in automatically and keeps the screen on
 ```
 
 ## Apps
